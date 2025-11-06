@@ -1,13 +1,20 @@
 {
-  "name": "@phoenix-demo/wallet",
-  "version": "0.1.0",
+  "name": "@vincenttaylorlab3/phoenix-wallet",
+  "version": "0.1.1",
   "description": "Phoenix WalletConnect protocol SDK for wallet developers",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "walletconnect",
@@ -15,10 +22,19 @@
     "ethereum",
     "solana",
     "multichain",
-    "e2e-encryption"
+    "e2e-encryption",
+    "web3",
+    "blockchain",
+    "react-native"
   ],
-  "author": "",
+  "author": "vincenttaylorlab3",
   "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "tweetnacl": "^1.0.3",
     "tweetnacl-util": "^0.15.1",

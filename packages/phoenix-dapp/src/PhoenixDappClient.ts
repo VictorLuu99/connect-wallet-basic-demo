@@ -167,30 +167,9 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
       // Connection established
       this.socket.on(SOCKET_EVENTS.CONNECT, () => {
         console.log('[Phoenix DAPP] Connected to server');
-
-        // Join room immediately so we can receive events
-        // Must join before wallet connects, otherwise we'll miss the connected_uuid event
+        // Join room immediately after connection
         this.socket!.emit(SOCKET_EVENTS.JOIN, { uuid });
         console.log('[Phoenix DAPP] Joined room:', uuid);
-
-        // Listen for wallet connection
-        this.socket!.on(SOCKET_EVENTS.CONNECTED_UUID, (data: { uuid: string; publicKey: string }) => {
-          console.log('[Phoenix DAPP] Received connected_uuid:', data);
-          if (data.uuid === uuid) {
-            // Set wallet's public key for encryption
-            if (data.publicKey) {
-              this.encryption.setPeerPublicKey(data.publicKey);
-              console.log('[Phoenix DAPP] Wallet public key set');
-            }
-            this.handleWalletConnected(uuid);
-          }
-        });
-
-        // Listen for responses
-        this.socket!.on(SOCKET_EVENTS.DAPP_RESPONSE, (data: EncryptedMessage) => {
-          this.handleResponse(data);
-        });
-
         resolve();
       });
 
@@ -199,6 +178,25 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
         console.error('[Phoenix DAPP] Socket error:', error);
         this.emit('error', error);
         reject(error);
+      });
+
+      // Listen for wallet connection
+      this.socket.on(SOCKET_EVENTS.CONNECTED_UUID, (data: { uuid: string; publicKey: string }) => {
+        console.log('[Phoenix DAPP] Received connected_uuid:', data);
+        if (data.uuid === uuid) {
+          // Set wallet's public key for encryption
+          if (data.publicKey) {
+            this.encryption.setPeerPublicKey(data.publicKey);
+            console.log('[Phoenix DAPP] Wallet public key set');
+            this.handleWalletConnected(uuid);
+          }
+        }
+      });
+
+      // Listen for encrypted responses from wallet
+      this.socket.on(SOCKET_EVENTS.DAPP_RESPONSE, (data: EncryptedMessage) => {
+        console.log('[Phoenix DAPP] Received dapp:response:', data);
+        this.handleResponse(data);
       });
 
       // Disconnection

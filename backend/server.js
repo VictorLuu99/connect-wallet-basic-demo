@@ -114,6 +114,8 @@ io.on('connection', (socket) => {
     }
 
     const { uuid, publicKey } = data;
+    console.log("connected_uuid", data);
+    
 
     if (!uuid || typeof uuid !== 'string') {
       socket.emit('error', { message: 'Missing or invalid UUID' });

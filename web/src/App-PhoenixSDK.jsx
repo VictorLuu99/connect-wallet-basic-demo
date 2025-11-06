@@ -1,12 +1,13 @@
 /**
  * WalletConnect Demo - Web App using Phoenix DAPP SDK
  *
- * Refactored to use @phoenix-demo/dapp SDK
+ * Refactored to use @vincenttaylorlab3/phoenix-dapp SDK (published on npm)
  * All encryption, connection management handled by SDK
  */
 
 import { useState, useEffect } from 'react';
-import { PhoenixDappClient } from '@phoenix-demo/dapp';
+// import { PhoenixDappClient } from '@phoenix-demo/dapp';
+import { PhoenixDappClient } from '@vincenttaylorlab3/phoenix-dapp';
 import { QRCodeSVG } from 'qrcode.react';
 import './index.css';
 
