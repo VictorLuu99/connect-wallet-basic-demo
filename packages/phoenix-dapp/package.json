@@ -1,0 +1,35 @@
+{
+  "name": "@phoenix-demo/dapp",
+  "version": "0.1.0",
+  "description": "Phoenix WalletConnect protocol SDK for dApp developers",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "walletconnect",
+    "dapp",
+    "ethereum",
+    "solana",
+    "multichain",
+    "e2e-encryption"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "tweetnacl": "^1.0.3",
+    "tweetnacl-util": "^0.15.1",
+    "qrcode": "^1.5.3",
+    "socket.io-client": "^4.7.2",
+    "eventemitter3": "^5.0.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "@types/node": "^20.10.6",
+    "@types/qrcode": "^1.5.5"
+  }
+}

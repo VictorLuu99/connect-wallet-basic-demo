@@ -1,20 +1,20 @@
 # Connection Flow - E2E Encrypted (Improved)
 
 ## Overview
-Zero-trust backend architecture where Web and Mobile establish end-to-end encryption. Backend only forwards encrypted messages without reading content.
+Zero-trust backend architecture where DAPP and Wallet establish end-to-end encryption. Backend only forwards encrypted messages without reading content.
 
 ## Security Mechanisms
 
 ### 1. Key Exchange (TweetNaCl - Curve25519)
-- Web generates ephemeral key pair using `nacl.box.keyPair()` (webSecretKey, webPublicKey)
-- Mobile generates ephemeral key pair using `nacl.box.keyPair()` (mobileSecretKey, mobilePublicKey)
+- DAPP generates ephemeral key pair using `nacl.box.keyPair()` (webSecretKey, webPublicKey)
+- Wallet generates ephemeral key pair using `nacl.box.keyPair()` (mobileSecretKey, mobilePublicKey)
 - Shared secret = `nacl.box.before(peerPublicKey, mySecretKey)`
 - Used for `nacl.box` encryption (authenticated encryption)
 
 ### 2. Connection Establishment
-- Web generates UUID and listens for connection
-- Mobile connects, joins room, and emits connection event
-- Web joins room when connection event received
+- DAPP generates UUID and listens for connection
+- Wallet connects, joins room, and emits connection event
+- DAPP joins room when connection event received
 
 ---
 
@@ -23,9 +23,9 @@ Zero-trust backend architecture where Web and Mobile establish end-to-end encryp
 ```mermaid
 sequenceDiagram
     participant User
-    participant Web as Web App<br/>(React)
+    participant Web as DAPP<br/>(React)
     participant Backend as Backend<br/>(Dumb Relay)
-    participant Mobile as Mobile App<br/>(React Native)
+    participant Mobile as Wallet<br/>(React Native)
     participant Blockchain as Blockchain<br/>(Signature Verify)
 
     Note over User,Blockchain: Phase 1: Session Creation
@@ -48,7 +48,7 @@ sequenceDiagram
     Web->>Web: Display QR code
     deactivate Web
 
-    Note over User,Blockchain: Phase 2: Mobile Scans & Key Exchange
+    Note over User,Blockchain: Phase 2: Wallet Scans & Key Exchange
 
     User->>Mobile: Scan QR Code
     activate Mobile
@@ -71,7 +71,7 @@ sequenceDiagram
     deactivate Backend
     deactivate Mobile
 
-    Note over User,Blockchain: Phase 3: Web Joins Room
+    Note over User,Blockchain: Phase 3: DAPP Joins Room
 
     activate Web
     Web->>Web: Receive 'connected_uuid' event
@@ -92,9 +92,9 @@ sequenceDiagram
 
 ## Step-by-Step Breakdown
 
-### Phase 1: Web Generates UUID and QR Code
+### Phase 1: DAPP Generates UUID and QR Code
 
-1. **Web generates ephemeral keys using tweetnacl**
+1. **DAPP generates ephemeral keys using tweetnacl**
    ```js
    const nacl = require('tweetnacl');
    const webKeyPair = nacl.box.keyPair();
@@ -102,7 +102,7 @@ sequenceDiagram
    // webKeyPair.secretKey: Uint8Array (32 bytes)
    ```
 
-2. **Web generates UUID locally**
+2. **DAPP generates UUID locally**
    ```js
    const { randomUUID } = require('crypto'); // Node.js
    // or
@@ -113,7 +113,7 @@ sequenceDiagram
    const uuid = randomUUID(); // e.g., "550e8400-e29b-41d4-a716-446655440000"
    ```
 
-3. **Web connects and listens for connection event**
+3. **DAPP connects and listens for connection event**
    ```js
    const socket = io(serverUrl);
    
@@ -121,7 +121,7 @@ sequenceDiagram
      // Listen for 'connected_uuid' event
      socket.on('connected_uuid', (data) => {
        const { uuid } = data;
-       // Join the room when mobile connects
+       // Join the room when wallet connects
        socket.join(uuid);
        console.log('Joined room:', uuid);
      });
@@ -137,15 +137,15 @@ sequenceDiagram
    }
    ```
 
-### Phase 2: Mobile Scans and Generates Keys
+### Phase 2: Wallet Scans and Generates Keys
 
-1. **Mobile parses QR**
+1. **Wallet parses QR**
    ```js
    const { uuid, webPublicKey } = parseQR();
    const webPublicKeyBytes = Buffer.from(webPublicKey, 'base64');
    ```
 
-2. **Mobile generates key pair using tweetnacl**
+2. **Wallet generates key pair using tweetnacl**
    ```js
    const nacl = require('tweetnacl');
    const mobileKeyPair = nacl.box.keyPair();
@@ -153,15 +153,15 @@ sequenceDiagram
    // mobileKeyPair.secretKey: Uint8Array (32 bytes)
    ```
 
-3. **Mobile computes shared secret**
+3. **Wallet computes shared secret**
    ```js
    const sharedSecret = nacl.box.before(webPublicKeyBytes, mobileKeyPair.secretKey);
    // sharedSecret: Uint8Array (32 bytes)
    ```
 
-### Phase 3: Mobile Connects and Joins Room
+### Phase 3: Wallet Connects and Joins Room
 
-1. **Mobile connects, joins room, and emits connection event**
+1. **Wallet connects, joins room, and emits connection event**
    ```js
    const socket = io(serverUrl);
    
@@ -169,7 +169,7 @@ sequenceDiagram
      // Join room with UUID
      socket.join(uuid);
      
-     // Emit connection event to notify Web
+     // Emit connection event to notify DAPP
      socket.emit('connected_uuid', { uuid });
    });
    ```
@@ -180,12 +180,12 @@ sequenceDiagram
 // Backend code - DUMB RELAY with Socket.io Rooms
 
 io.on('connection', (socket) => {
-  // Mobile joins room and emits connection event
+  // Wallet joins room and emits connection event
   socket.on('connected_uuid', (data) => {
     const { uuid } = data;
     
     // Backend CANNOT and SHOULD NOT verify anything
-    // Just broadcast to all sockets in the room (including Web)
+    // Just broadcast to all sockets in the room (including DAPP)
     io.to(uuid).emit('connected_uuid', { uuid });
   });
   
@@ -203,9 +203,9 @@ io.on('connection', (socket) => {
 });
 ```
 
-### Phase 5: Web Joins Room
+### Phase 5: DAPP Joins Room
 
-1. **Web receives connection event and joins room**
+1. **DAPP receives connection event and joins room**
    ```js
    socket.on('connected_uuid', (data) => {
      const { uuid } = data;
@@ -235,8 +235,8 @@ io.on('connection', (socket) => {
 - Compromised backend ≠ compromised security
 
 ### ✅ Direct Connection
-- Mobile connects and joins room directly
-- Web joins room when connection event received
+- Wallet connects and joins room directly
+- DAPP joins room when connection event received
 - Simple room-based communication
 
 ### ✅ Forward Secrecy
@@ -286,7 +286,7 @@ io.on('connection', (socket) => {
 
 ### Key Management
 ```js
-// Web side
+// DAPP side
 const connection = {
   uuid: string, // UUID generated locally, used as room identifier
   webKeyPair: { publicKey: Uint8Array, secretKey: Uint8Array },
@@ -294,7 +294,7 @@ const connection = {
   connected: boolean
 };
 
-// Mobile side
+// Wallet side
 const session = {
   uuid: string, // Extracted from QR code, used as room identifier
   mobileKeyPair: { publicKey: Uint8Array, secretKey: Uint8Array },
@@ -353,7 +353,7 @@ function decryptMessage(encryptedBase64, nonceBase64, peerPublicKey, mySecretKey
 | Backend trust | Required | Zero-trust |
 | Encryption | None | E2E TweetNaCl box (Curve25519) |
 | Auth method | SHA256 hash | ECDSA signature |
-| Verification | Backend | Web (client) |
+| Verification | Backend | DAPP (client) |
 | Compromise impact | High | Low |
 | Signature strength | Weak | Cryptographic |
 | Message auth | HMAC | Built-in MAC (nacl.box) |

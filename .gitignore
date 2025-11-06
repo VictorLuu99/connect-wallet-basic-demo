@@ -1,0 +1,7 @@
+/packages/phoenix-dapp/node_modules
+/packages/phoenix-dapp/dist
+/packages/phoenix-wallet/node_modules
+/packages/phoenix-wallet/dist
+.playwright-mcp
+.cursor
+.claude
