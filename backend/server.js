@@ -1,14 +1,20 @@
 /**
- * WalletConnect Demo Backend Server - Zero-Trust Architecture
+ * Phoenix WalletConnect Backend Server - Zero-Trust Architecture
  *
  * This is a STATELESS RELAY SERVER that:
  * - Manages Socket.io rooms for real-time communication
- * - Forwards encrypted messages between web and mobile (cannot decrypt)
+ * - Forwards encrypted messages between dApp and wallet (cannot decrypt)
  * - Provides rate limiting for DoS protection
  * - Does NOT validate, verify, or store any session data
  *
  * Security: All messages are E2E encrypted with TweetNaCl (Curve25519)
  * Backend cannot read message content - acts as dumb relay only.
+ *
+ * Phoenix SDK Protocol Events:
+ * - join: Join room by UUID
+ * - connected_uuid: Wallet notifies dApp of connection
+ * - dapp:request → wallet:request: dApp sends request to wallet
+ * - wallet:response → dapp:response: Wallet sends response to dApp
  */
 
 const express = require('express');
@@ -64,15 +70,27 @@ function checkRateLimit(socketId) {
 /**
  * Socket.io Connection Handler
  * Manages rooms and relays encrypted messages
+ * 
+ * Phoenix SDK Protocol Events:
+ * - join: Join room by UUID
+ * - connected_uuid: Wallet notifies dApp of connection
+ * - dapp:request: dApp sends request → forwarded as wallet:request
+ * - wallet:response: Wallet sends response → forwarded as dapp:response
  */
 io.on('connection', (socket) => {
   console.log(`🔌 Client connected: ${socket.id}`);
 
   /**
    * Join a room (identified by UUID)
-   * Both web and mobile join the same room using UUID from QR code
+   * Phoenix SDK uses 'join' event (not 'join-room')
+   * Both dApp and wallet join the same room using UUID from QR code
    */
-  socket.on('join-room', (data) => {
+  socket.on('join', (data) => {
+    if (!checkRateLimit(socket.id)) {
+      socket.emit('error', { message: 'Rate limit exceeded' });
+      return;
+    }
+
     const { uuid } = data;
 
     if (!uuid || typeof uuid !== 'string' || uuid.length > 100) {
@@ -85,8 +103,9 @@ io.on('connection', (socket) => {
   });
 
   /**
-   * Mobile emits 'connected_uuid' after joining room
-   * Backend broadcasts to room (web listens for this)
+   * Wallet emits 'connected_uuid' after joining room
+   * Backend broadcasts to room (dApp listens for this)
+   * Includes wallet's public key so dApp can encrypt messages
    */
   socket.on('connected_uuid', (data) => {
     if (!checkRateLimit(socket.id)) {
@@ -94,27 +113,28 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const { uuid, mobilePublicKey } = data;
+    const { uuid, publicKey } = data;
 
-    if (!uuid || !mobilePublicKey) {
-      socket.emit('error', { message: 'Missing required fields' });
+    if (!uuid || typeof uuid !== 'string') {
+      socket.emit('error', { message: 'Missing or invalid UUID' });
       return;
     }
 
-    // Broadcast to room (web will receive this)
-    socket.to(uuid).emit('connected_uuid', {
-      uuid,
-      mobilePublicKey
-    });
+    // Broadcast to room (dApp will receive this)
+    // Backend just forwards - public key is not encrypted (it's meant to be public)
+    io.to(uuid).emit('connected_uuid', { uuid, publicKey });
 
-    console.log(`📱 Mobile connected to room: ${uuid}`);
+    console.log(`📱 Wallet connected to room: ${uuid}`);
   });
 
   /**
-   * Web sends encrypted sign message request
-   * Backend forwards encrypted blob to mobile (cannot decrypt)
+   * dApp sends encrypted request (unified event for signMessage/signTransaction)
+   * Backend forwards encrypted blob to wallet as 'wallet:request' (cannot decrypt)
+   * 
+   * Phoenix SDK uses unified 'dapp:request' event for all request types
+   * Request type (signMessage/signTransaction) is inside encrypted payload
    */
-  socket.on('web:signMessage', (data) => {
+  socket.on('dapp:request', (data) => {
     if (!checkRateLimit(socket.id)) {
       socket.emit('error', { message: 'Rate limit exceeded' });
       return;
@@ -127,22 +147,26 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Forward encrypted message to mobile (backend cannot read content)
-    socket.to(uuid).emit('mobile:signRequest', {
+    // Forward encrypted message to wallet (backend cannot read content)
+    // Backend renames event: dapp:request → wallet:request
+    socket.to(uuid).emit('wallet:request', {
       uuid,
       encryptedPayload,
       nonce,
       timestamp
     });
 
-    console.log(`✍️  Relayed encrypted sign request to room: ${uuid}`);
+    console.log(`✍️  Relayed encrypted dApp request to wallet in room: ${uuid}`);
   });
 
   /**
-   * Web sends encrypted transaction request
-   * Backend forwards encrypted blob to mobile (cannot decrypt)
+   * Wallet sends encrypted response (approve/reject)
+   * Backend forwards encrypted blob to dApp as 'dapp:response' (cannot decrypt)
+   * 
+   * Phoenix SDK uses 'wallet:response' event
+   * Response status (success/error) is inside encrypted payload
    */
-  socket.on('web:sendTransaction', (data) => {
+  socket.on('wallet:response', (data) => {
     if (!checkRateLimit(socket.id)) {
       socket.emit('error', { message: 'Rate limit exceeded' });
       return;
@@ -155,43 +179,16 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Forward encrypted message to mobile (backend cannot read content)
-    socket.to(uuid).emit('mobile:transactionRequest', {
+    // Forward encrypted response to dApp (backend cannot read content)
+    // Backend renames event: wallet:response → dapp:response
+    socket.to(uuid).emit('dapp:response', {
       uuid,
       encryptedPayload,
       nonce,
       timestamp
     });
 
-    console.log(`💸 Relayed encrypted transaction request to room: ${uuid}`);
-  });
-
-  /**
-   * Mobile sends encrypted response (approve/reject)
-   * Backend forwards encrypted blob to web (cannot decrypt)
-   */
-  socket.on('mobile:response', (data) => {
-    if (!checkRateLimit(socket.id)) {
-      socket.emit('error', { message: 'Rate limit exceeded' });
-      return;
-    }
-
-    const { uuid, encryptedPayload, nonce, timestamp } = data;
-
-    if (!uuid || !encryptedPayload || !nonce) {
-      socket.emit('error', { message: 'Missing required fields' });
-      return;
-    }
-
-    // Forward encrypted response to web (backend cannot read content)
-    socket.to(uuid).emit('web:response', {
-      uuid,
-      encryptedPayload,
-      nonce,
-      timestamp
-    });
-
-    console.log(`📤 Relayed encrypted response to room: ${uuid}`);
+    console.log(`📤 Relayed encrypted wallet response to dApp in room: ${uuid}`);
   });
 
   /**
@@ -222,10 +219,19 @@ app.get('/health', (req, res) => {
  */
 app.get('/', (req, res) => {
   res.json({
-    name: 'WalletConnect Demo Backend',
-    version: '2.0.0',
+    name: 'Phoenix WalletConnect Backend',
+    version: '3.0.0',
     architecture: 'Zero-Trust E2E Encrypted Relay',
     encryption: 'TweetNaCl (Curve25519 + XSalsa20-Poly1305)',
+    protocol: 'Phoenix SDK Protocol',
+    events: {
+      join: 'Join room by UUID',
+      connected_uuid: 'Wallet notifies dApp of connection',
+      'dapp:request': 'dApp sends request → forwarded as wallet:request',
+      'wallet:request': 'Backend forwards dapp:request to wallet',
+      'wallet:response': 'Wallet sends response → forwarded as dapp:response',
+      'dapp:response': 'Backend forwards wallet:response to dApp'
+    },
     note: 'Backend cannot decrypt messages - all communication is end-to-end encrypted'
   });
 });
