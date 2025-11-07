@@ -6,8 +6,8 @@
  */
 
 import { useState, useEffect } from 'react';
-// import { PhoenixDappClient } from '@phoenix-demo/dapp';
-import { PhoenixDappClient } from '@vincenttaylorlab3/phoenix-dapp';
+import { PhoenixDappClient } from '@phoenix-demo/dapp';
+// import { PhoenixDappClient } from '@vincenttaylorlab3/phoenix-dapp';
 import { QRCodeSVG } from 'qrcode.react';
 import './index.css';
 
@@ -51,8 +51,11 @@ function App() {
    * Setup Phoenix SDK event listeners and check for restored session
    */
   useEffect(() => {
-    // Check if session was restored on mount
+    // Wait for SDK initialization before checking session
     const checkSession = async () => {
+      // CRITICAL: Wait for SDK to finish loading from storage
+      await phoenixClient.waitForInitialization();
+
       const currentSession = phoenixClient.getSession();
       if (currentSession?.connected) {
         console.log('✅ Session restored:', currentSession);
@@ -75,9 +78,16 @@ function App() {
     // Session disconnected
     phoenixClient.on('session_disconnected', () => {
       console.log('❌ Wallet disconnected');
-      setConnected(false);
-      setSession(null);
-      setUri('');
+      // Don't update state if we're in the middle of restoring a session
+      // The session_connected event will update the state if reconnection succeeds
+      const currentSession = phoenixClient.getSession();
+      if (!currentSession || !currentSession.connected) {
+        setConnected(false);
+        setSession(null);
+        setUri('');
+      } else {
+        console.log('[React] Ignoring disconnect event - session is still connected');
+      }
     });
 
     // Request response
@@ -227,6 +237,25 @@ function App() {
   };
 
   /**
+   * Manually reconnect
+   */
+  const handleReconnect = async () => {
+    try {
+      setErrorMessage('');
+      setLoading(true);
+
+      await phoenixClient.reconnect();
+
+      console.log('✅ Reconnected successfully');
+      setLoading(false);
+    } catch (error) {
+      console.error('Failed to reconnect:', error);
+      setErrorMessage(error.message);
+      setLoading(false);
+    }
+  };
+
+  /**
    * Disconnect
    */
   const handleDisconnect = () => {
@@ -288,9 +317,18 @@ function App() {
                 <div><strong>Address:</strong> {session?.address || 'N/A'}</div>
                 <div><strong>Chain:</strong> {session?.chainType || 'N/A'}</div>
               </div>
-              <button onClick={handleDisconnect} className="btn btn-secondary">
-                Disconnect
-              </button>
+              <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                <button
+                  onClick={handleReconnect}
+                  disabled={loading}
+                  className="btn btn-primary"
+                >
+                  {loading ? 'Reconnecting...' : '🔄 Reconnect'}
+                </button>
+                <button onClick={handleDisconnect} className="btn btn-secondary">
+                  Disconnect
+                </button>
+              </div>
             </section>
 
             {/* Sign Message Section */}

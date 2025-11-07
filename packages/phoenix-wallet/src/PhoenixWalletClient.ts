@@ -29,6 +29,9 @@ export class PhoenixWalletClient extends EventEmitter<PhoenixWalletEvents> {
   private config: Required<PhoenixWalletConfig> & { storage?: any; enablePersistence?: boolean };
   private sessionStorage: SessionStorage;
   private storedServerUrl?: string;
+  private isReconnecting: boolean = false;
+  private initializationPromise: Promise<void>;
+  private initialized: boolean = false;
 
   constructor(config?: PhoenixWalletConfig) {
     super();
@@ -48,10 +51,37 @@ export class PhoenixWalletClient extends EventEmitter<PhoenixWalletEvents> {
     this.encryption = new EncryptionManager();
     this.requestHandler = new RequestHandler();
 
-    // Try to restore session on initialization
-    this.restoreSession().catch((error) => {
-      console.warn('[Phoenix Wallet] Failed to restore session:', error);
-    });
+    // Initialize and restore session - store promise for waitForInitialization()
+    this.initializationPromise = this.initialize();
+  }
+
+  /**
+   * Initialize client and restore session if available
+   */
+  private async initialize(): Promise<void> {
+    try {
+      await this.restoreSession();
+      this.initialized = true;
+      console.log('[Phoenix Wallet] Client initialized');
+    } catch (error) {
+      console.warn('[Phoenix Wallet] Failed to restore session during initialization:', error);
+      this.initialized = true; // Mark as initialized even if restore failed
+    }
+  }
+
+  /**
+   * Wait for client initialization to complete
+   * This should be called before checking session status after page reload
+   */
+  async waitForInitialization(): Promise<void> {
+    await this.initializationPromise;
+  }
+
+  /**
+   * Check if client has completed initialization
+   */
+  isInitialized(): boolean {
+    return this.initialized;
   }
 
   /**
@@ -121,6 +151,13 @@ export class PhoenixWalletClient extends EventEmitter<PhoenixWalletEvents> {
    * Disconnect from dApp
    */
   disconnect(): void {
+    // Don't emit disconnect event if we're in the middle of reconnecting
+    // This prevents the UI from showing disconnected state during session restore
+    if (this.isReconnecting) {
+      console.log('[Phoenix Wallet] Skipping disconnect() call during reconnection');
+      return;
+    }
+
     if (this.socket) {
       this.socket.disconnect();
       this.socket = undefined;
@@ -166,6 +203,19 @@ export class PhoenixWalletClient extends EventEmitter<PhoenixWalletEvents> {
    */
   private async connectSocket(serverUrl: string, uuid: string): Promise<void> {
     return new Promise((resolve, reject) => {
+      // Clean up old socket if exists
+      if (this.socket) {
+        console.log('[Phoenix Wallet] Cleaning up old socket connection');
+        // Store reference to old socket to prevent event propagation
+        const oldSocket = this.socket;
+        // Remove all listeners from old socket BEFORE disconnecting
+        // This prevents disconnect events from firing during cleanup
+        oldSocket.removeAllListeners();
+        // Disconnect old socket (won't trigger events since listeners are removed)
+        oldSocket.disconnect();
+        this.socket = undefined;
+      }
+
       this.socket = io(serverUrl, {
         reconnection: this.config.reconnect,
         reconnectionAttempts: this.config.reconnectAttempts,
@@ -220,7 +270,15 @@ export class PhoenixWalletClient extends EventEmitter<PhoenixWalletEvents> {
 
       // Disconnection
       this.socket.on(SOCKET_EVENTS.DISCONNECT, () => {
-        console.log('[Phoenix Wallet] Disconnected from server');
+        console.log('[Phoenix Wallet] Disconnected from server, isReconnecting:', this.isReconnecting);
+        // CRITICAL: Don't emit disconnect event if we're reconnecting
+        // This prevents the UI from showing disconnected state during session restore
+        if (this.isReconnecting) {
+          console.log('[Phoenix Wallet] Skipping disconnect event during reconnection');
+          return;
+        }
+        // Only update session state and emit event if this is a real disconnect
+        console.log('[Phoenix Wallet] Emitting session_disconnected event');
         if (this.session) {
           this.session.connected = false;
         }
@@ -282,22 +340,35 @@ export class PhoenixWalletClient extends EventEmitter<PhoenixWalletEvents> {
   private async restoreSession(): Promise<void> {
     const storedData = await this.sessionStorage.loadSession();
     if (!storedData) {
+      console.log('[Phoenix Wallet] No stored session found');
       return;
     }
+
+    console.log('[Phoenix Wallet] Found stored session, restoring...');
 
     // Restore encryption keys
     this.encryption = this.sessionStorage.restoreEncryption(storedData);
 
-    // Restore session state (but not fully connected until signer is provided)
-    this.session = storedData.session;
+    // Restore session state (but mark as not connected since socket needs to reconnect)
+    // The session.connected flag in storage might be true, but socket is not connected after reload
+    this.session = {
+      ...storedData.session,
+      connected: false, // Always mark as not connected after restore - socket needs to reconnect
+    };
     this.storedServerUrl = storedData.serverUrl;
 
-    // If session was connected, we can try to reconnect
+    console.log('[Phoenix Wallet] Session restored from storage:', {
+      uuid: this.session.uuid,
+      wasConnected: storedData.session.connected,
+      hasPeerPublicKey: !!storedData.peerPublicKey,
+    });
+
+    // If session was previously connected, we can try to reconnect
     // But we need the signer to be set first
     if (storedData.session.connected && storedData.peerPublicKey) {
       console.log('[Phoenix Wallet] Session restored, ready to reconnect with signer');
       // Emit event so user knows they can reconnect
-      this.emit('session_restored', storedData.session);
+      this.emit('session_restored', this.session);
     }
   }
 
@@ -315,11 +386,26 @@ export class PhoenixWalletClient extends EventEmitter<PhoenixWalletEvents> {
       throw new Error('Signer does not match stored session');
     }
 
-    // Set signer
-    this.requestHandler.setSigner(signer);
+    try {
+      // Set reconnecting flag BEFORE connecting to prevent disconnect events
+      // This flag will be cleared after session is fully restored
+      console.log('[Phoenix Wallet] Setting isReconnecting = true');
+      this.isReconnecting = true;
 
-    // Reconnect socket
-    await this.connectSocket(this.storedServerUrl, this.session.uuid);
+      // Set signer
+      this.requestHandler.setSigner(signer);
+
+      // Reconnect socket
+      await this.connectSocket(this.storedServerUrl, this.session.uuid);
+
+      // CRITICAL: Clear reconnecting flag AFTER session is fully restored
+      // This prevents disconnect events from being ignored after reconnection completes
+      this.isReconnecting = false;
+    } catch (error) {
+      // Clear flag on any error
+      this.isReconnecting = false;
+      throw error;
+    }
   }
 
   /**

@@ -20,6 +20,11 @@ Demo mô phỏng cơ chế WalletConnect với **End-to-End Encryption**, cho ph
 **Having issues?**
 - See **[TROUBLESHOOTING.md](./TROUBLESHOOTING.md)** for solutions
 
+**Documentation:**
+- **[SESSION_PERSISTENCE.md](./SESSION_PERSISTENCE.md)** - Auto-restore sessions on reload (localStorage + AsyncStorage)
+- **[TEST_SESSION_PERSISTENCE.md](./TEST_SESSION_PERSISTENCE.md)** - Testing guide with 7 test scenarios
+- **[PHOENIX_SDK_INTEGRATION.md](./PHOENIX_SDK_INTEGRATION.md)** - SDK integration guide
+
 ## 📋 Mục tiêu
 
 - Web App có thể thực hiện các chức năng blockchain (transfer fund, sign message)
@@ -465,7 +470,6 @@ const isValid = verifyTimestamp(timestamp, maxAgeMs = 5 * 60 * 1000);
 - ❌ Private key management is mock (not hardware wallet/secure enclave)
 - ❌ Signature and transaction hash are simulated
 - ❌ No biometric authentication for mobile
-- ❌ No persistent key storage
 
 **Network security:**
 - ❌ Using WS instead of WSS (no TLS encryption for transport layer)
@@ -473,6 +477,7 @@ const isValid = verifyTimestamp(timestamp, maxAgeMs = 5 * 60 * 1000);
 - ❌ Backend CORS allows all origins (`origin: "*"`)
 
 **Session management:**
+- ✅ **Session persistence** implemented (localStorage for web, AsyncStorage for mobile)
 - ❌ No session expiration enforcement
 - ❌ No connection limits per UUID
 - ❌ No automatic cleanup of stale rooms
@@ -624,10 +629,12 @@ base64ToPublicKey()      // Decode from QR/transport
 ✅ **Rate Limiting** (DoS protection)
 ✅ **Room-based Isolation** (UUID-based)
 ✅ **Authenticated Encryption** (AEAD)
+✅ **Session Persistence** (Auto-restore on reload) - See [SESSION_PERSISTENCE.md](./SESSION_PERSISTENCE.md)
 
 ## 🚧 Potential Improvements
 
 ### High Priority
+- [x] ~~Session persistence (auto-restore on reload)~~ ✅ DONE - See [SESSION_PERSISTENCE.md](./SESSION_PERSISTENCE.md)
 - [ ] Enable WSS (TLS/SSL) for production
 - [ ] Implement session expiration with auto cleanup
 - [ ] Add connection limits per UUID

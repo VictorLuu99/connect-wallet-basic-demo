@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SDK Version Test</title>
+</head>
+<body>
+    <h1>Testing SDK Version</h1>
+    <div id="result"></div>
+
+    <script type="module">
+        // Import SDK
+        import { PhoenixDappClient } from '@vincenttaylorlab3/phoenix-dapp';
+
+        // Create client
+        const client = new PhoenixDappClient({
+            serverUrl: 'http://localhost:3001',
+            enablePersistence: true
+        });
+
+        // Check if fix is present by looking at the code
+        const clientCode = client.constructor.toString();
+        const hasSocketCleanup = clientCode.includes('Cleaning up old socket');
+        const hasStoredKeysCheck = clientCode.includes('Session reconnected successfully');
+
+        const result = document.getElementById('result');
+        result.innerHTML = `
+            <h2>SDK Version Check:</h2>
+            <p>Has Socket Cleanup: ${hasSocketCleanup ? '✅ YES (v0.1.4)' : '❌ NO (v0.1.3)'}</p>
+            <p>Has Stored Keys Check: ${hasStoredKeysCheck ? '✅ YES (v0.1.4)' : '❌ NO (v0.1.3)'}</p>
+            <hr>
+            <p><strong>Result: ${hasSocketCleanup && hasStoredKeysCheck ? '✅ v0.1.4 LOADED' : '❌ OLD VERSION CACHED'}</strong></p>
+            <hr>
+            <h3>If old version:</h3>
+            <ol>
+                <li>Press Ctrl+Shift+R (Windows) or Cmd+Shift+R (Mac)</li>
+                <li>Or right-click reload button → "Empty Cache and Hard Reload"</li>
+            </ol>
+        `;
+    </script>
+</body>
+</html>

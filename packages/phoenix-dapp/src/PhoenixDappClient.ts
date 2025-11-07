@@ -35,8 +35,12 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
   private session?: Session;
   private config: Required<PhoenixDappConfig> & { storage?: any; enablePersistence?: boolean };
   private sessionStorage: SessionStorage;
+  private initializationPromise: Promise<void>;
+  private initialized: boolean = false;
+  private isReconnecting: boolean = false;
 
   constructor(config: PhoenixDappConfig) {
+    console.log('PhoenixDappClient constructor');
     super();
 
     const storage = config.storage || getDefaultStorageAdapter();
@@ -51,14 +55,46 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
       enablePersistence,
     };
 
+    console.log('config', this.config);
+    console.log('storage', storage);
+    console.log('enablePersistence', enablePersistence);
+
+
     this.sessionStorage = new SessionStorage(storage, enablePersistence);
     this.encryption = new EncryptionManager();
     this.requestManager = new RequestManager(TIMEOUTS.REQUEST_TIMEOUT);
 
-    // Try to restore session on initialization
-    this.restoreSession().catch((error) => {
-      console.warn('[Phoenix DAPP] Failed to restore session:', error);
-    });
+    // Initialize and restore session - store promise for waitForInitialization()
+    this.initializationPromise = this.initialize();
+  }
+
+  /**
+   * Initialize client and restore session if available
+   */
+  private async initialize(): Promise<void> {
+    try {
+      await this.restoreSession();
+      this.initialized = true;
+      console.log('[Phoenix DAPP] Client initialized');
+    } catch (error) {
+      console.warn('[Phoenix DAPP] Failed to restore session during initialization:', error);
+      this.initialized = true; // Mark as initialized even if restore failed
+    }
+  }
+
+  /**
+   * Wait for client initialization to complete
+   * This should be called before checking session status after page reload
+   */
+  async waitForInitialization(): Promise<void> {
+    await this.initializationPromise;
+  }
+
+  /**
+   * Check if client has completed initialization
+   */
+  isInitialized(): boolean {
+    return this.initialized;
   }
 
   /**
@@ -95,10 +131,74 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
       console.warn('[Phoenix DAPP] Failed to save initial session:', error);
     });
 
-    // Connect socket
+    // Connect socket (not a reconnection, so isReconnecting stays false)
     await this.connectSocket(uuid);
 
+    // Clear any reconnecting flag that might have been set (shouldn't happen in connect())
+    this.isReconnecting = false;
+
     return { uri, uuid };
+  }
+
+  /**
+   * Manually reconnect to existing session
+   * Useful for recovering from network issues or forcing a reconnect
+   */
+  async reconnect(): Promise<void> {
+    if (!this.session) {
+      throw new Error('No session to reconnect - call connect() first');
+    }
+
+    if (this.session.connected && this.socket?.connected) {
+      console.log('[Phoenix DAPP] Already connected, no need to reconnect');
+      return;
+    }
+
+    console.log('[Phoenix DAPP] Manual reconnect requested');
+
+    const uuid = this.session.uuid;
+    console.log('uuid', uuid);
+
+    try {
+      // Set reconnecting flag BEFORE connecting to prevent disconnect events
+      // This flag will be cleared after session is fully restored
+      console.log('[Phoenix DAPP] Setting isReconnecting = true');
+      this.isReconnecting = true;
+
+      // Connect socket (this already joins the room in connectSocket)
+      await this.connectSocket(uuid);
+
+      console.log("this.encryption.hasPeerPublicKey(): ", this.encryption.hasPeerPublicKey());
+
+      // If we have peer public key from storage, we can consider ourselves connected
+      // No need to wait for connected_uuid event - we already have encryption keys
+      if (this.encryption.hasPeerPublicKey()) {
+        this.session.connected = true;
+        console.log('[Phoenix DAPP] Session reconnected successfully with stored keys');
+
+        // Save the reconnected state
+        await this.sessionStorage.saveSession(
+          this.session,
+          this.config.serverUrl,
+          this.encryption
+        );
+
+        // CRITICAL: Clear reconnecting flag AFTER session is fully restored
+        // This prevents disconnect events from being ignored after reconnection completes
+        this.isReconnecting = false;
+
+        // Emit connected event to update UI
+        this.emit('session_connected', this.session);
+      } else {
+        console.warn('[Phoenix DAPP] Reconnection failed: no peer public key');
+        this.isReconnecting = false; // Clear flag on failure
+        throw new Error('Cannot reconnect without peer public key');
+      }
+    } catch (error) {
+      // Clear flag on any error
+      this.isReconnecting = false;
+      throw error;
+    }
   }
 
   /**
@@ -200,6 +300,13 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
    * Disconnect from wallet
    */
   disconnect(): void {
+    // Don't emit disconnect event if we're in the middle of reconnecting
+    // This prevents the UI from showing disconnected state during session restore
+    if (this.isReconnecting) {
+      console.log('[Phoenix DAPP] Skipping disconnect() call during reconnection');
+      return;
+    }
+
     if (this.socket) {
       this.socket.disconnect();
       this.socket = undefined;
@@ -236,7 +343,21 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
    * Connect to socket server
    */
   private async connectSocket(uuid: string): Promise<void> {
+    console.log('connectSocket', uuid);
     return new Promise((resolve, reject) => {
+      // Clean up old socket if exists
+      if (this.socket) {
+        console.log('[Phoenix DAPP] Cleaning up old socket connection');
+        // Store reference to old socket to prevent event propagation
+        const oldSocket = this.socket;
+        // Remove all listeners from old socket BEFORE disconnecting
+        // This prevents disconnect events from firing during cleanup
+        oldSocket.removeAllListeners();
+        // Disconnect old socket (won't trigger events since listeners are removed)
+        oldSocket.disconnect();
+        this.socket = undefined;
+      }
+
       this.socket = io(this.config.serverUrl, {
         reconnection: this.config.reconnect,
         reconnectionAttempts: this.config.reconnectAttempts,
@@ -250,12 +371,15 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
         // Join room immediately after connection
         this.socket!.emit(SOCKET_EVENTS.JOIN, { uuid });
         console.log('[Phoenix DAPP] Joined room:', uuid);
+        // Don't clear reconnecting flag here - let the caller (connect() or reconnect()) handle it
+        // This ensures the flag stays true during the entire reconnection process
         resolve();
       });
 
       // Connection error
       this.socket.on(SOCKET_EVENTS.ERROR, (error: Error) => {
         console.error('[Phoenix DAPP] Socket error:', error);
+        this.isReconnecting = false; // Clear flag on error
         this.emit('error', error);
         reject(error);
       });
@@ -281,7 +405,14 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
 
       // Disconnection
       this.socket.on(SOCKET_EVENTS.DISCONNECT, () => {
-        console.log('[Phoenix DAPP] Disconnected from server');
+        console.log('[Phoenix DAPP] Disconnected from server, isReconnecting:', this.isReconnecting);
+        // Don't emit disconnect event if we're reconnecting
+        if (this.isReconnecting) {
+          console.log('[Phoenix DAPP] Skipping disconnect event during reconnection');
+          return;
+        }
+        // Only update session state and emit event if this is a real disconnect
+        console.log('[Phoenix DAPP] Emitting session_disconnected event');
         if (this.session) {
           this.session.connected = false;
         }
@@ -406,31 +537,6 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
     }
   }
 
-  /**
-   * Reconnect to existing session
-   */
-  private async reconnect(): Promise<void> {
-    if (!this.session) {
-      throw new Error('No session to reconnect');
-    }
-
-    const uuid = this.session.uuid;
-
-    // Connect socket
-    await this.connectSocket(uuid);
-
-    // Re-join room (socket.io will handle reconnection)
-    if (this.socket && this.socket.connected) {
-      this.socket.emit(SOCKET_EVENTS.JOIN, { uuid });
-      console.log('[Phoenix DAPP] Rejoined room:', uuid);
-
-      // If we have peer public key, we can consider ourselves connected
-      if (this.encryption.hasPeerPublicKey()) {
-        this.session.connected = true;
-        this.emit('session_connected', this.session);
-      }
-    }
-  }
 
   /**
    * Ensure client is connected

@@ -5,7 +5,7 @@
  * All encryption, session management handled by SDK
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -27,7 +27,10 @@ import {
   Session,
   AsyncStorageAdapter,
   decodePayload,
-} from '@vincenttaylorlab3/phoenix-wallet';
+// } from '@vincenttaylorlab3/phoenix-wallet';
+} from '@phoenix-demo/wallet';
+
+
 
 // Mock wallet signer implementation
 // Payloads are automatically decoded from JSON strings by SDK
@@ -75,6 +78,7 @@ export default function Index() {
   // Connection state
   const [connected, setConnected] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
+  const isAutoReconnectingRef = useRef(false);
 
   // Request state
   const [pendingRequest, setPendingRequest] = useState<SignRequest | null>(null);
@@ -96,32 +100,36 @@ export default function Index() {
    * Setup Phoenix SDK event listeners and check for restored session
    */
   useEffect(() => {
-    // Check if session was restored on mount
+    // Check if session was restored on mount and auto-reconnect
     const checkSession = async () => {
-      const hasStored = await phoenixClient.hasStoredSession();
-      if (hasStored) {
-        const currentSession = phoenixClient.getSession();
-        if (currentSession) {
-          console.log('📦 Stored session found, ready to reconnect');
-          // Session restored, but need signer to fully reconnect
-          Alert.alert(
-            'Session Restored',
-            'Previous session found. Reconnect?',
-            [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Reconnect',
-                onPress: async () => {
-                  try {
-                    await phoenixClient.reconnectWithSigner(signer);
-                  } catch (error: any) {
-                    Alert.alert('Reconnect Failed', error.message);
-                  }
-                },
-              },
-            ]
-          );
+      try {
+        // CRITICAL: Wait for SDK to finish loading from storage
+        await phoenixClient.waitForInitialization();
+        
+        const hasStored = await phoenixClient.hasStoredSession();
+        if (hasStored) {
+          const currentSession = phoenixClient.getSession();
+          if (currentSession && currentSession.connected === false) {
+            console.log('📦 Stored session found, auto-reconnecting...');
+            isAutoReconnectingRef.current = true;
+            // Auto-reconnect on reload (similar to web app behavior)
+            try {
+              await phoenixClient.reconnectWithSigner(signer);
+              console.log('✅ Auto-reconnected successfully');
+            } catch (error: any) {
+              console.warn('⚠️ Auto-reconnect failed:', error.message);
+              isAutoReconnectingRef.current = false;
+              // Don't show alert on auto-reconnect failure - user can manually reconnect
+            }
+          } else if (currentSession?.connected) {
+            // Session already connected (shouldn't happen after reload, but handle it)
+            console.log('✅ Session already connected');
+            setConnected(true);
+            setSession(currentSession);
+          }
         }
+      } catch (error: any) {
+        console.warn('⚠️ Failed to check/restore session:', error.message);
       }
     };
     checkSession();
@@ -135,17 +143,29 @@ export default function Index() {
     // Session connected
     phoenixClient.on('session_connected', (sessionData) => {
       console.log('✅ Connected to dApp:', sessionData);
+      const wasAutoReconnecting = isAutoReconnectingRef.current;
       setConnected(true);
       setSession(sessionData);
-      Alert.alert('Success', 'Connected to dApp!');
+      isAutoReconnectingRef.current = false;
+      // Only show alert if this is a new connection (not auto-reconnect)
+      if (!wasAutoReconnecting) {
+        Alert.alert('Success', 'Connected to dApp!');
+      }
     });
 
     // Session disconnected
     phoenixClient.on('session_disconnected', () => {
       console.log('❌ Disconnected from dApp');
-      setConnected(false);
-      setSession(null);
-      setPendingRequest(null);
+      // Don't update state if we're in the middle of restoring a session
+      // The session_connected event will update the state if reconnection succeeds
+      const currentSession = phoenixClient.getSession();
+      if (!currentSession || !currentSession.connected) {
+        setConnected(false);
+        setSession(null);
+        setPendingRequest(null);
+      } else {
+        console.log('[React] Ignoring disconnect event - session is still connected');
+      }
     });
 
     // Sign request received
@@ -187,6 +207,17 @@ export default function Index() {
     try {
       console.log('📱 QR Scanned:', data);
       console.log('signer:', signer);
+
+      // Parse the scanned QR to get UUID
+      const phoenixData = JSON.parse(data.replace('phoenix:', ''));
+      const scannedUUID = phoenixData.uuid;
+
+      // Check if already connected to a different session
+      const currentSession = phoenixClient.getSession();
+      if (currentSession && currentSession.uuid !== scannedUUID) {
+        console.log('[Wallet] Different UUID detected, disconnecting old session first');
+        phoenixClient.disconnect();
+      }
 
       // Connect using Phoenix SDK
       await phoenixClient.connect(data, signer);
@@ -248,7 +279,7 @@ export default function Index() {
     // }
     // setScanning(true);
     // Test data - Phoenix URI format: phoenix:{JSON}
-    const phoenixURI = `phoenix:{"version":"1","uuid":"9eb47c7f-14bd-42a8-8749-31a679fb9506","serverUrl":"http://localhost:3001","publicKey":"E58YNn6OeyqcU+SOkiNFwavdGB73SwOJZQM4TLFu9XQ="}`
+    const phoenixURI = `phoenix:{"version":"1","uuid":"75a4c0fd-8350-4dc3-8f5a-55f4ae7f9b2b","serverUrl":"http://localhost:3001","publicKey":"svtQ5MqDUw++lN9xbennvnPhM5CXdqqTN2jJgE95/yQ="}`
     handleQRScanned({ data: phoenixURI });
   };
 
