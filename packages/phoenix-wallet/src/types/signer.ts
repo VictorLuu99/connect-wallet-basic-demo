@@ -1,9 +1,9 @@
 import { ChainType } from './chains';
-import { SignMessagePayload, SignTransactionPayload } from './protocol';
 
 /**
  * Wallet signer interface
  * Wallets must implement this interface to use Phoenix Wallet SDK
+ * Payloads are decoded from JSON strings to chain-specific objects
  */
 export interface WalletSigner {
   /**
@@ -18,17 +18,31 @@ export interface WalletSigner {
 
   /**
    * Sign a message
-   * @param params - Message signing parameters
+   * @param params - Message signing parameters (decoded from JSON string)
    * @returns Promise<string> - Signature string
    */
-  signMessage(params: SignMessagePayload): Promise<string>;
+  signMessage(params: any): Promise<string>;
 
   /**
-   * Sign and broadcast a transaction
-   * @param params - Transaction parameters
+   * Sign a transaction (returns signature, does not broadcast)
+   * @param params - Transaction parameters (decoded from JSON string)
+   * @returns Promise<string> - Transaction signature
+   */
+  signTransaction(params: any): Promise<string>;
+
+  /**
+   * Sign multiple transactions (for batch signing, e.g., Solana)
+   * @param transactions - Array of transaction parameters (decoded from JSON string)
+   * @returns Promise<string[]> - Array of transaction signatures
+   */
+  signAllTransactions?(transactions: any[]): Promise<string[]>;
+
+  /**
+   * Sign and send a transaction (broadcasts immediately, e.g., EVM)
+   * @param params - Transaction parameters (decoded from JSON string)
    * @returns Promise<string> - Transaction hash
    */
-  signTransaction(params: SignTransactionPayload): Promise<string>;
+  sendTransaction?(params: any): Promise<string>;
 }
 
 /**

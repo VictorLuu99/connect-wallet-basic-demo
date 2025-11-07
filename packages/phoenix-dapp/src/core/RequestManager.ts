@@ -27,7 +27,13 @@ export class RequestManager {
    * Generate unique request ID
    */
   generateRequestId(type: SignRequestType): string {
-    const prefix = type === 'sign_message' ? 'msg' : 'tx';
+    const prefixMap: Record<SignRequestType, string> = {
+      'sign_message': 'msg',
+      'sign_transaction': 'tx',
+      'sign_all_transactions': 'txs',
+      'send_transaction': 'send',
+    };
+    const prefix = prefixMap[type] || 'req';
     return `${prefix}-${Date.now()}-${Math.random().toString(36).substring(7)}`;
   }
 

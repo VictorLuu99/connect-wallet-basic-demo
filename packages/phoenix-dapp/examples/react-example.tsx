@@ -7,6 +7,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { PhoenixDappClient, SignResponse } from '@phoenix/dapp';
+import { QRCodeSVG } from 'qrcode.react'; // or any QR code library
 
 // Initialize client (do this once, outside component or in context)
 const phoenixClient = new PhoenixDappClient({
@@ -15,7 +16,7 @@ const phoenixClient = new PhoenixDappClient({
 });
 
 export function ConnectWalletExample() {
-  const [qrCode, setQrCode] = useState<string>('');
+  const [uri, setUri] = useState<string>('');
   const [connected, setConnected] = useState(false);
   const [message, setMessage] = useState('Hello from dApp!');
   const [signature, setSignature] = useState<string>('');
@@ -26,7 +27,7 @@ export function ConnectWalletExample() {
     phoenixClient.on('session_connected', (session) => {
       console.log('Wallet connected:', session);
       setConnected(true);
-      setQrCode(''); // Clear QR code
+      setUri(''); // Clear URI
     });
 
     phoenixClient.on('session_disconnected', () => {
@@ -53,13 +54,13 @@ export function ConnectWalletExample() {
   const handleConnect = async () => {
     try {
       setLoading(true);
-      const { qrCodeUrl, uri } = await phoenixClient.connect();
+      const { uri } = await phoenixClient.connect();
 
       console.log('Connection URI:', uri);
-      setQrCode(qrCodeUrl);
+      setUri(uri);
     } catch (error) {
       console.error('Failed to connect:', error);
-      alert('Failed to generate QR code');
+      alert('Failed to generate connection URI');
     } finally {
       setLoading(false);
     }
@@ -128,17 +129,13 @@ export function ConnectWalletExample() {
         <div>
           <h2>Connect Wallet</h2>
           <button onClick={handleConnect} disabled={loading}>
-            {loading ? 'Generating QR...' : 'Connect Wallet'}
+            {loading ? 'Generating URI...' : 'Connect Wallet'}
           </button>
 
-          {qrCode && (
+          {uri && (
             <div style={{ marginTop: '20px' }}>
               <p>Scan this QR code with your wallet:</p>
-              <img
-                src={qrCode}
-                alt="Connection QR Code"
-                style={{ maxWidth: '100%', border: '1px solid #ccc' }}
-              />
+              <QRCodeSVG value={uri} size={300} level="M" />
               <p style={{ fontSize: '12px', color: '#666' }}>
                 Waiting for wallet connection...
               </p>

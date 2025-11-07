@@ -28,38 +28,22 @@ export interface EncryptedMessage {
 /**
  * Sign request types
  */
-export type SignRequestType = 'sign_message' | 'sign_transaction';
-
-/**
- * Sign message payload
- */
-export interface SignMessagePayload {
-  message: string;
-}
-
-/**
- * Sign transaction payload
- */
-export interface SignTransactionPayload {
-  to: string;
-  value: string;
-  data?: string;
-  gasLimit?: string;
-  gasPrice?: string;
-  nonce?: number;
-  // Additional chain-specific fields
-  [key: string]: any;
-}
+export type SignRequestType = 
+  | 'sign_message' 
+  | 'sign_transaction' 
+  | 'sign_all_transactions' 
+  | 'send_transaction';
 
 /**
  * Sign request (decrypted payload)
+ * Payload is a JSON-encoded string to support multi-chain (EVM, Solana, etc.)
  */
 export interface SignRequest {
   id: string;
   type: SignRequestType;
   chainType: ChainType;
   chainId: string;
-  payload: SignMessagePayload | SignTransactionPayload;
+  payload: string; // JSON-encoded string for multi-chain support
   timestamp: number;
 }
 
@@ -73,7 +57,9 @@ export type SignResponseStatus = 'success' | 'error';
  */
 export interface SignResponseResult {
   signature?: string;
+  signatures?: string[]; // For batch signing (e.g., Solana)
   txHash?: string;
+  txHashes?: string[]; // For batch transactions
   message?: string;
 }
 

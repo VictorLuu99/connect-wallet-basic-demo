@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@phoenix-demo/dapp": "file:../packages/phoenix-dapp",
-    "@vincenttaylorlab3/phoenix-dapp": "^0.1.1",
+    "@vincenttaylorlab3/phoenix-dapp": "^0.1.2",
     "qrcode.react": "^3.1.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

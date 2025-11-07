@@ -5,11 +5,13 @@ Phoenix WalletConnect protocol SDK for wallet developers.
 ## Features
 
 - 🔐 **E2E Encryption** - TweetNaCl (Curve25519) encryption
-- 🌐 **Multi-Chain Support** - EVM and Solana blockchains
+- 🌐 **Multi-Chain Support** - EVM, Solana, and any blockchain
 - 📱 **QR Scanning** - Simple dApp connection via QR
+- 💾 **Session Persistence** - Auto-restore sessions on app reload
 - 🔌 **Pluggable Signer** - Bring your own signing logic
 - ⚡ **Event-Driven API** - React Native friendly
 - 📦 **TypeScript** - Full type safety
+- 🔧 **Flexible Payloads** - Generic JSON-encoded payloads for any chain
 
 ## Installation
 
@@ -29,14 +31,28 @@ class MyWalletSigner implements WalletSigner {
   address = '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0';
   chainType = 'evm' as const;
 
-  async signMessage(params: { message: string }): Promise<string> {
-    // Your signing logic here
-    return await yourWallet.signMessage(params.message);
+  // Payload is automatically decoded from JSON string
+  async signMessage(params: any): Promise<string> {
+    // params is decoded - can be { message: '...' } or chain-specific format
+    const message = typeof params === 'string' ? params : params.message;
+    return await yourWallet.signMessage(message);
   }
 
+  // Transaction params are decoded from JSON string
   async signTransaction(params: any): Promise<string> {
-    // Your signing logic here
-    return await yourWallet.signAndSendTransaction(params);
+    // params is decoded transaction object (chain-specific)
+    return await yourWallet.signTransaction(params);
+  }
+
+  // Optional: For batch signing (e.g., Solana)
+  async signAllTransactions(transactions: any[]): Promise<string[]> {
+    return await yourWallet.signAll(transactions);
+  }
+
+  // Optional: For direct send (e.g., EVM)
+  async sendTransaction(params: any): Promise<string> {
+    // Sign and broadcast immediately
+    return await yourWallet.sendTransaction(params);
   }
 }
 
@@ -208,6 +224,8 @@ new PhoenixWalletClient(config?: PhoenixWalletConfig)
 - `reconnect?: boolean` - Enable auto-reconnection (default: true)
 - `reconnectAttempts?: number` - Max reconnection attempts (default: 5)
 - `reconnectDelay?: number` - Reconnection delay in ms (default: 2000)
+- `storage?: StorageAdapter` - Custom storage adapter (default: localStorage/AsyncStorage)
+- `enablePersistence?: boolean` - Enable session persistence (default: true)
 
 #### Methods
 
@@ -243,11 +261,20 @@ Get current session information.
 
 Get current pending request.
 
+##### `hasStoredSession(): Promise<boolean>`
+
+Check if there's a stored session that can be restored.
+
+##### `reconnectWithSigner(signer: WalletSigner): Promise<void>`
+
+Reconnect to a stored session with signer. Use after `session_restored` event.
+
 #### Events
 
 ```typescript
 client.on('session_connected', (session: Session) => void);
 client.on('session_disconnected', () => void);
+client.on('session_restored', (session: Session) => void); // Session restored from storage
 client.on('sign_request', (request: SignRequest) => void);
 client.on('request_approved', (requestId: string) => void);
 client.on('request_rejected', (requestId: string) => void);
@@ -256,23 +283,28 @@ client.on('error', (error: Error) => void);
 
 ### `WalletSigner` Interface
 
-Wallets must implement this interface:
+Wallets must implement this interface. Payloads are automatically decoded from JSON strings:
 
 ```typescript
 interface WalletSigner {
   address: string;
-  chainType: 'evm' | 'solana';
+  chainType: 'evm' | 'solana' | string;
 
-  signMessage(params: { message: string }): Promise<string>;
+  // Payload is decoded from JSON string
+  signMessage(params: any): Promise<string>;
 
-  signTransaction(params: {
-    to: string;
-    value: string;
-    data?: string;
-    [key: string]: any;
-  }): Promise<string>;
+  // Transaction params are decoded from JSON string
+  signTransaction(params: any): Promise<string>;
+
+  // Optional: For batch signing (e.g., Solana)
+  signAllTransactions?(transactions: any[]): Promise<string[]>;
+
+  // Optional: For direct send (e.g., EVM)
+  sendTransaction?(params: any): Promise<string>;
 }
 ```
+
+**Note:** The SDK automatically decodes payloads from JSON strings, so your signer methods receive the original objects.
 
 ### `MultiChainWalletSigner` Interface
 
@@ -294,6 +326,42 @@ import { QRParser } from '@phoenix/wallet';
 if (QRParser.isValidURI(qrData)) {
   const connectionData = QRParser.parseURI(qrData);
   console.log('Connecting to:', connectionData.serverUrl);
+}
+```
+
+## Session Persistence
+
+Sessions are automatically persisted and restored on app reload:
+
+```typescript
+// React Native with AsyncStorage
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AsyncStorageAdapter } from '@phoenix/wallet';
+
+const client = new PhoenixWalletClient({
+  storage: new AsyncStorageAdapter(AsyncStorage),
+  enablePersistence: true, // Default: true
+});
+
+// Listen for restored session
+client.on('session_restored', async (session) => {
+  // Reconnect with signer
+  await client.reconnectWithSigner(signer);
+});
+```
+
+## Payload Decoding
+
+The SDK automatically decodes payloads from JSON strings. You can use convenience types:
+
+```typescript
+import { decodePayload, EVMTransactionPayload, SolanaTransactionPayload } from '@phoenix/wallet';
+
+// In your signer implementation
+async signTransaction(params: any): Promise<string> {
+  // params is already decoded from JSON string
+  // Can be EVMTransactionPayload, SolanaTransactionPayload, or any chain format
+  return await yourWallet.sign(params);
 }
 ```
 

@@ -1,11 +1,10 @@
 import {
   SignRequest,
   SignResponse,
-  SignMessagePayload,
-  SignTransactionPayload,
   WalletSigner,
 } from '../types';
 import { isValidTimestamp } from '../utils/validation';
+import { decodePayload } from '../utils/payload';
 
 /**
  * Request handler for processing sign requests
@@ -72,19 +71,51 @@ export class RequestHandler {
     try {
       let result: any;
 
+      // Decode payload from JSON string
+      const decodedPayload = decodePayload(request.payload);
+
       if (request.type === 'sign_message') {
-        const payload = request.payload as SignMessagePayload;
-        const signature = await this.signer.signMessage(payload);
-        result = { signature, message: payload.message };
+        const signature = await this.signer.signMessage(decodedPayload);
+        result = { 
+          signature, 
+          message: decodedPayload.message || decodedPayload 
+        };
       } else if (request.type === 'sign_transaction') {
-        const payload = request.payload as SignTransactionPayload;
-        const txHash = await this.signer.signTransaction(payload);
+        const signature = await this.signer.signTransaction(decodedPayload);
         result = {
-          txHash,
-          to: payload.to,
-          value: payload.value,
+          signature,
           from: this.signer.address,
         };
+      } else if (request.type === 'sign_all_transactions') {
+        // Handle batch signing (e.g., Solana)
+        if (!this.signer.signAllTransactions) {
+          throw new Error('signAllTransactions not supported by signer');
+        }
+        const transactions = decodedPayload.transactions || decodedPayload;
+        if (!Array.isArray(transactions)) {
+          throw new Error('sign_all_transactions requires array of transactions');
+        }
+        const signatures = await this.signer.signAllTransactions(transactions);
+        result = {
+          signatures,
+          from: this.signer.address,
+        };
+      } else if (request.type === 'send_transaction') {
+        // Handle direct send (e.g., EVM)
+        if (this.signer.sendTransaction) {
+          const txHash = await this.signer.sendTransaction(decodedPayload);
+          result = {
+            txHash,
+            from: this.signer.address,
+          };
+        } else {
+          // Fallback: sign and return signature (wallet can broadcast separately)
+          const signature = await this.signer.signTransaction(decodedPayload);
+          result = {
+            signature,
+            from: this.signer.address,
+          };
+        }
       } else {
         throw new Error(`Unsupported request type: ${request.type}`);
       }

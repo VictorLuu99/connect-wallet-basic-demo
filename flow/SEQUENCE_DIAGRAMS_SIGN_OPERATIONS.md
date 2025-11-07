@@ -10,7 +10,9 @@ Unified flow for DAPP to request wallet to sign messages or transactions. All co
 
 ## Supported Operations
 - `sign_message`: Sign arbitrary message
-- `sign_transaction`: Sign and send transaction
+- `sign_transaction`: Sign transaction (returns signature)
+- `sign_all_transactions`: Batch sign multiple transactions (e.g., Solana)
+- `send_transaction`: Sign and broadcast transaction immediately (e.g., EVM)
 
 ## Supported Chain Types
 - `evm`: Ethereum Virtual Machine chains (Ethereum, Polygon, BSC, etc.)
@@ -34,18 +36,37 @@ sequenceDiagram
         User->>DAPP: Enter message text<br/>Click "Sign Message"
         activate DAPP
         DAPP->>DAPP: Generate requestId<br/>(msg-{timestamp}-{random})
-        DAPP->>DAPP: Create request payload:<br/>{ id, type: 'sign_message',<br/>  chainType: 'evm', chainId: '1',<br/>  payload: { message }, timestamp }
+        DAPP->>DAPP: Encode payload to JSON string:<br/>payloadStr = JSON.stringify({ message })
+        DAPP->>DAPP: Create request payload:<br/>{ id, type: 'sign_message',<br/>  chainType: 'evm', chainId: '1',<br/>  payload: payloadStr, timestamp }
         DAPP->>DAPP: Encrypt with nacl.box:<br/>encrypted = nacl.box(payload, nonce,<br/>  walletPublicKey, dappSecretKey)
         DAPP->>Backend: emit('dapp:request', {<br/>  uuid, encryptedPayload,<br/>  nonce, timestamp })
         deactivate DAPP
     else Sign Transaction Flow
-        User->>DAPP: Enter recipient address<br/>Enter amount<br/>Click "Send Transaction"
+        User->>DAPP: Enter transaction details<br/>Click "Sign Transaction"
         activate DAPP
         DAPP->>DAPP: Generate requestId<br/>(tx-{timestamp}-{random})
-        DAPP->>DAPP: Build transaction object<br/>Validate transaction data
-        DAPP->>DAPP: Create request payload:<br/>{ id, type: 'sign_transaction',<br/>  chainType: 'evm', chainId: '1',<br/>  payload: { to, value, ... },<br/>  timestamp }
-        DAPP->>DAPP: Encrypt with nacl.box:<br/>encrypted = nacl.box(payload, nonce,<br/>  walletPublicKey, dappSecretKey)
-        DAPP->>Backend: emit('dapp:request', {<br/>  uuid, encryptedPayload,<br/>  nonce, timestamp })
+        DAPP->>DAPP: Encode payload to JSON string:<br/>payloadStr = JSON.stringify(transaction)
+        DAPP->>DAPP: Create request payload:<br/>{ id, type: 'sign_transaction',<br/>  chainType: 'evm', chainId: '1',<br/>  payload: payloadStr, timestamp }
+        DAPP->>DAPP: Encrypt with nacl.box
+        DAPP->>Backend: emit('dapp:request', {...})
+        deactivate DAPP
+    else Sign All Transactions Flow (Batch)
+        User->>DAPP: Click "Sign All Transactions"
+        activate DAPP
+        DAPP->>DAPP: Generate requestId<br/>(all-{timestamp}-{random})
+        DAPP->>DAPP: Encode payload to JSON string:<br/>payloadStr = JSON.stringify({ transactions: [...] })
+        DAPP->>DAPP: Create request payload:<br/>{ id, type: 'sign_all_transactions',<br/>  chainType: 'solana', chainId: 'mainnet-beta',<br/>  payload: payloadStr, timestamp }
+        DAPP->>DAPP: Encrypt with nacl.box
+        DAPP->>Backend: emit('dapp:request', {...})
+        deactivate DAPP
+    else Send Transaction Flow (Direct Send)
+        User->>DAPP: Enter transaction details<br/>Click "Send Transaction"
+        activate DAPP
+        DAPP->>DAPP: Generate requestId<br/>(send-{timestamp}-{random})
+        DAPP->>DAPP: Encode payload to JSON string:<br/>payloadStr = JSON.stringify(transaction)
+        DAPP->>DAPP: Create request payload:<br/>{ id, type: 'send_transaction',<br/>  chainType: 'evm', chainId: '1',<br/>  payload: payloadStr, timestamp }
+        DAPP->>DAPP: Encrypt with nacl.box
+        DAPP->>Backend: emit('dapp:request', {...})
         deactivate DAPP
     end
 
@@ -58,15 +79,20 @@ sequenceDiagram
     activate Wallet
     Wallet->>Wallet: Receive wallet:request event
     Wallet->>Wallet: Decrypt with nacl.box.open:<br/>payload = nacl.box.open(encrypted,<br/>  nonce, dappPublicKey, walletSecretKey)
-    Wallet->>Wallet: Extract: { id, type,<br/>  chainType, chainId, payload, ... }
+    Wallet->>Wallet: Extract: { id, type,<br/>  chainType, chainId, payload: string, ... }
+    Wallet->>Wallet: Decode payload from JSON string:<br/>decodedPayload = JSON.parse(payload)
     Wallet->>Wallet: Verify timestamp (max 5 min)
     Wallet->>Wallet: Validate request fields<br/>Check chainType matches signer
     Wallet->>Wallet: Set pendingRequest state
     
     alt type === 'sign_message'
-        Wallet->>Wallet: Show approval modal<br/>Display: payload.message<br/>Chain: {chainType, chainId}
+        Wallet->>Wallet: Show approval modal<br/>Display: decodedPayload.message<br/>Chain: {chainType, chainId}
     else type === 'sign_transaction'
         Wallet->>Wallet: Show approval modal<br/>Display: Transaction details<br/>(To, Value, From, Chain, Type)
+    else type === 'sign_all_transactions'
+        Wallet->>Wallet: Show approval modal<br/>Display: Batch transactions<br/>(Count, Details, Chain)
+    else type === 'send_transaction'
+        Wallet->>Wallet: Show approval modal<br/>Display: Transaction details<br/>(Note: Will broadcast immediately)
     end
     deactivate Wallet
 
@@ -76,19 +102,25 @@ sequenceDiagram
         User->>Wallet: Click "Approve"
         activate Wallet
         Wallet->>Wallet: Call handleApprove()
-        Wallet->>Crypto: Sign based on chainType:<br/>- EVM: signMessage/signTransaction<br/>- Solana: signMessage/signTransaction
+        Wallet->>Crypto: Sign based on type & chainType
         activate Crypto
-        alt type === 'signMessage'
-            Crypto->>Crypto: Generate signature<br/>(chainType-specific)
+        alt type === 'sign_message'
+            Crypto->>Crypto: signer.signMessage(decodedPayload)<br/>(chainType-specific)
             Crypto-->>Wallet: signature
-        else type === 'signTransaction'
-            Crypto->>Crypto: Sign & broadcast transaction<br/>(chainType-specific)
+        else type === 'sign_transaction'
+            Crypto->>Crypto: signer.signTransaction(decodedPayload)<br/>(chainType-specific)
+            Crypto-->>Wallet: signature
+        else type === 'sign_all_transactions'
+            Crypto->>Crypto: signer.signAllTransactions(decodedPayload.transactions)<br/>(chainType-specific)
+            Crypto-->>Wallet: signatures[] (array)
+        else type === 'send_transaction'
+            Crypto->>Crypto: signer.sendTransaction(decodedPayload)<br/>or signer.signTransaction() + broadcast<br/>(chainType-specific)
             Crypto-->>Wallet: txHash
         end
         deactivate Crypto
         
-        Wallet->>Wallet: Create result object<br/>(signature or txHash)
-        Wallet->>Wallet: Create response payload:<br/>{ id, type, status: 'success',<br/>  result, timestamp }
+        Wallet->>Wallet: Create result object:<br/>- signature (single)<br/>- signatures[] (batch)<br/>- txHash (single)
+        Wallet->>Wallet: Create response payload:<br/>{ id, type, status: 'success',<br/>  result: { signature/signatures/txHash },<br/>  timestamp }
         Wallet->>Wallet: Encrypt with nacl.box:<br/>encrypted = nacl.box(payload, nonce,<br/>  dappPublicKey, walletSecretKey)
         Wallet->>Backend: emit('wallet:response', {<br/>  uuid, encryptedPayload,<br/>  nonce, timestamp })
         activate Backend
@@ -106,7 +138,13 @@ sequenceDiagram
         DAPP->>DAPP: Decrypt with nacl.box.open:<br/>payload = nacl.box.open(encrypted,<br/>  nonce, walletPublicKey, dappSecretKey)
         DAPP->>DAPP: Extract: { id, type,<br/>  status, result, error }
         DAPP->>DAPP: Resolve/reject pending request
-        DAPP->>DAPP: Display result in UI<br/>(signature or txHash)
+        alt type === 'sign_message' || type === 'sign_transaction'
+            DAPP->>DAPP: Display result.signature
+        else type === 'sign_all_transactions'
+            DAPP->>DAPP: Display result.signatures[] (array)
+        else type === 'send_transaction'
+            DAPP->>DAPP: Display result.txHash
+        end
         deactivate DAPP
 
         Note over User,Crypto: ✅ Operation Completed Successfully
@@ -155,15 +193,17 @@ const chainId = "1"; // Ethereum mainnet
 // Generate request ID (SDK format: msg-{timestamp}-{random})
 const requestId = `msg-${Date.now()}-${Math.random().toString(36).substring(7)}`;
 
+// Encode payload to JSON string (for multi-chain support)
+const payloadObject = { message };
+const payloadString = JSON.stringify(payloadObject);
+
 // Create request payload
 const requestPayload = {
   id: requestId,
   type: 'sign_message',
   chainType,           // "evm" | "solana"
   chainId,             // Chain-specific ID
-  payload: {
-    message
-  },
+  payload: payloadString, // JSON-encoded string
   timestamp: Date.now()
 };
 
@@ -212,13 +252,16 @@ if (!isValidValue(transaction.value)) {
 // Generate request ID (SDK format: tx-{timestamp}-{random})
 const requestId = `tx-${Date.now()}-${Math.random().toString(36).substring(7)}`;
 
+// Encode payload to JSON string (for multi-chain support)
+const payloadString = JSON.stringify(transaction);
+
 // Create request payload
 const requestPayload = {
   id: requestId,
   type: 'sign_transaction',
   chainType,           // "evm" | "solana"
   chainId,             // Chain-specific ID
-  payload: transaction,
+  payload: payloadString, // JSON-encoded string
   timestamp: Date.now()
 };
 
@@ -275,7 +318,12 @@ socket.on('wallet:request', (data) => {
   }
   
   const payload = JSON.parse(new TextDecoder().decode(decrypted));
-  // payload: { id, type, chainType, chainId, payload: { message } | { transaction }, timestamp }
+  // payload: { id, type, chainType, chainId, payload: string, timestamp }
+  // payload.payload is a JSON-encoded string, need to decode it
+  
+  // Decode the payload string
+  const decodedPayload = JSON.parse(payload.payload);
+  // decodedPayload: { message } | { transaction } | { transactions: [...] }
   
   // Verify timestamp (prevent replay attacks)
   const now = Date.now();
@@ -292,8 +340,8 @@ socket.on('wallet:request', (data) => {
   }
   
   // Validate request based on type
-  if (payload.type === 'sign_transaction') {
-    const transaction = payload.payload;
+  if (payload.type === 'sign_transaction' || payload.type === 'send_transaction') {
+    const transaction = decodedPayload;
     if (!isValidAddress(transaction.to)) {
       sendErrorResponse(payload.id, payload.type, 'Invalid recipient address');
       return;
@@ -302,22 +350,27 @@ socket.on('wallet:request', (data) => {
       sendErrorResponse(payload.id, payload.type, 'Invalid value');
       return;
     }
+  } else if (payload.type === 'sign_all_transactions') {
+    if (!Array.isArray(decodedPayload.transactions)) {
+      sendErrorResponse(payload.id, payload.type, 'Invalid transactions array');
+      return;
+    }
   }
   
-  // Set pending request
+  // Set pending request (store decoded payload)
   setPendingRequest({
     id: payload.id,
     type: payload.type,
     chainType: payload.chainType,
     chainId: payload.chainId,
-    payload: payload.payload
+    payload: decodedPayload // Store decoded payload
   });
   
   // Show approval modal
   if (payload.type === 'sign_message') {
     showApprovalModal({
       type: 'sign_message',
-      message: payload.payload.message,
+      message: decodedPayload.message,
       chainType: payload.chainType,
       chainId: payload.chainId,
       onApprove: () => handleApprove(payload.id),
@@ -327,10 +380,31 @@ socket.on('wallet:request', (data) => {
     showTransactionModal({
       type: 'sign_transaction',
       from: wallet.address,
-      to: payload.payload.to,
-      value: payload.payload.value,
+      to: decodedPayload.to,
+      value: decodedPayload.value,
       chainType: payload.chainType,
       chainId: payload.chainId,
+      onApprove: () => handleApprove(payload.id),
+      onReject: () => handleReject(payload.id)
+    });
+  } else if (payload.type === 'sign_all_transactions') {
+    showBatchModal({
+      type: 'sign_all_transactions',
+      transactions: decodedPayload.transactions,
+      chainType: payload.chainType,
+      chainId: payload.chainId,
+      onApprove: () => handleApprove(payload.id),
+      onReject: () => handleReject(payload.id)
+    });
+  } else if (payload.type === 'send_transaction') {
+    showTransactionModal({
+      type: 'send_transaction',
+      from: wallet.address,
+      to: decodedPayload.to,
+      value: decodedPayload.value,
+      chainType: payload.chainType,
+      chainId: payload.chainId,
+      note: 'This transaction will be broadcast immediately',
       onApprove: () => handleApprove(payload.id),
       onReject: () => handleReject(payload.id)
     });
@@ -351,17 +425,40 @@ async function handleApprove(requestId) {
   
   if (request.type === 'sign_message') {
     // Wallet signer handles EVM vs Solana signing differently
-    const payload = request.payload;
+    const payload = request.payload; // Already decoded
     const signature = await walletSigner.signMessage(payload);
     result = {
       signature,
-      message: payload.message
+      message: payload.message || payload
     };
     
   } else if (request.type === 'sign_transaction') {
     // Wallet signer handles EVM vs Solana transaction signing differently
-    const payload = request.payload;
-    const txHash = await walletSigner.signTransaction(payload);
+    const payload = request.payload; // Already decoded
+    const signature = await walletSigner.signTransaction(payload);
+    result = {
+      signature,
+      to: payload.to,
+      value: payload.value,
+      from: walletAddress
+    };
+    
+  } else if (request.type === 'sign_all_transactions') {
+    // Batch signing (e.g., Solana)
+    const transactions = request.payload.transactions; // Already decoded
+    const signatures = await walletSigner.signAllTransactions(transactions);
+    result = {
+      signatures, // Array of signatures
+      count: signatures.length
+    };
+    
+  } else if (request.type === 'send_transaction') {
+    // Direct send (e.g., EVM)
+    const payload = request.payload; // Already decoded
+    // Try sendTransaction first, fallback to signTransaction
+    const txHash = walletSigner.sendTransaction 
+      ? await walletSigner.sendTransaction(payload)
+      : await walletSigner.signTransaction(payload); // Fallback
     result = {
       txHash,
       to: payload.to,
@@ -514,6 +611,22 @@ socket.on('dapp:response', (data) => {
       });
       showSuccess('Message signed successfully!');
     } else if (payload.type === 'sign_transaction') {
+      // Display signature
+      setTransactionResult({
+        signature: payload.result.signature,
+        to: payload.result.to,
+        value: payload.result.value,
+        from: payload.result.from
+      });
+      showSuccess('Transaction signed successfully!');
+    } else if (payload.type === 'sign_all_transactions') {
+      // Display batch signatures
+      setBatchResult({
+        signatures: payload.result.signatures,
+        count: payload.result.count
+      });
+      showSuccess(`Batch signed: ${payload.result.count} transactions`);
+    } else if (payload.type === 'send_transaction') {
       // Display transaction hash
       setTransactionResult({
         txHash: payload.result.txHash,
@@ -552,8 +665,10 @@ socket.on('dapp:response', (data) => {
 
 ### ✅ Multi-Chain Support
 - Chain type and chain ID in every request
+- Generic payload encoding (JSON strings) supports any chain format
 - Crypto module handles chain-specific signing
-- Supports EVM and Solana (extensible)
+- Supports EVM and Solana (extensible to any blockchain)
+- Payload encoding/decoding utilities handle chain-specific formats
 
 ### ✅ Unified Event System
 - Standardized `dapp:request` / `wallet:response` events
@@ -578,9 +693,7 @@ socket.on('dapp:response', (data) => {
   type: string,           // "sign_message"
   chainType: string,      // "evm" | "solana"
   chainId: string,        // "1" (Ethereum), "101" (Solana mainnet), etc.
-  payload: {
-    message: string       // Message to sign
-  },
+  payload: string,        // JSON-encoded string: "{\"message\":\"Hello\"}"
   timestamp: number       // Unix timestamp
 }
 
@@ -590,15 +703,27 @@ socket.on('dapp:response', (data) => {
   type: string,           // "sign_transaction"
   chainType: string,      // "evm" | "solana"
   chainId: string,        // "1" (Ethereum), "101" (Solana mainnet), etc.
-  payload: {
-    to: string,           // Recipient address
-    value: string,        // Amount in smallest unit (Wei for EVM)
-    data?: string,        // Optional transaction data
-    gasLimit?: string,    // Optional gas limit
-    gasPrice?: string,    // Optional gas price
-    nonce?: number        // Optional nonce
-    // ... other chain-specific fields
-  },
+  payload: string,        // JSON-encoded string: "{\"to\":\"0x...\",\"value\":\"...\"}"
+  timestamp: number       // Unix timestamp
+}
+
+// Encrypted payload contains (sign_all_transactions):
+{
+  id: string,             // "all-1699234567890-abc123"
+  type: string,           // "sign_all_transactions"
+  chainType: string,      // "solana" (typically)
+  chainId: string,        // "mainnet-beta" (Solana)
+  payload: string,        // JSON-encoded string: "{\"transactions\":[{...},{...}]}"
+  timestamp: number       // Unix timestamp
+}
+
+// Encrypted payload contains (send_transaction):
+{
+  id: string,             // "send-1699234567890-xyz789"
+  type: string,           // "send_transaction"
+  chainType: string,      // "evm" (typically)
+  chainId: string,        // "1" (Ethereum)
+  payload: string,        // JSON-encoded string: "{\"to\":\"0x...\",\"value\":\"...\"}"
   timestamp: number       // Unix timestamp
 }
 
@@ -621,7 +746,7 @@ socket.on('dapp:response', (data) => {
   status: string,         // "success"
   result: {
     signature: string,    // "0x..." or base58 (Solana)
-    message: string       // Original message
+    message?: string      // Original message (optional)
   },
   timestamp: number
 }
@@ -632,10 +757,36 @@ socket.on('dapp:response', (data) => {
   type: string,           // "sign_transaction"
   status: string,         // "success"
   result: {
-    txHash: string,       // "0x..." or base58 (Solana)
-    to: string,           // Recipient address
-    value: string,        // Amount in smallest unit
-    from: string          // Sender address
+    signature: string,    // "0x..." or base58 (Solana) - transaction signature
+    to?: string,          // Recipient address (optional)
+    value?: string,       // Amount in smallest unit (optional)
+    from?: string         // Sender address (optional)
+  },
+  timestamp: number
+}
+
+// Encrypted payload contains (success - sign_all_transactions):
+{
+  id: string,             // Request ID
+  type: string,           // "sign_all_transactions"
+  status: string,         // "success"
+  result: {
+    signatures: string[], // Array of signatures: ["sig1", "sig2", ...]
+    count?: number        // Number of signatures (optional)
+  },
+  timestamp: number
+}
+
+// Encrypted payload contains (success - send_transaction):
+{
+  id: string,             // Request ID
+  type: string,           // "send_transaction"
+  status: string,         // "success"
+  result: {
+    txHash: string,       // "0x..." or base58 (Solana) - transaction hash
+    to?: string,          // Recipient address (optional)
+    value?: string,       // Amount in smallest unit (optional)
+    from?: string         // Sender address (optional)
   },
   timestamp: number
 }
@@ -643,7 +794,7 @@ socket.on('dapp:response', (data) => {
 // Encrypted payload contains (error):
 {
   id: string,             // Request ID
-  type: string,           // "sign_message" | "sign_transaction"
+  type: string,           // "sign_message" | "sign_transaction" | "sign_all_transactions" | "send_transaction"
   status: string,         // "error"
   error: string,          // Error message
   timestamp: number
@@ -675,7 +826,9 @@ socket.on('dapp:response', (data) => {
 
 The `type` field in encrypted payloads distinguishes operation types:
 - `"sign_message"`: Sign arbitrary message
-- `"sign_transaction"`: Sign and send transaction
+- `"sign_transaction"`: Sign transaction (returns signature, does not broadcast)
+- `"sign_all_transactions"`: Batch sign multiple transactions (e.g., Solana)
+- `"send_transaction"`: Sign and broadcast transaction immediately (e.g., EVM)
 
 ### Payload Status Field
 
@@ -745,19 +898,27 @@ interface WalletSigner {
   address: string;
   chainType: ChainType; // "evm" | "solana"
   
-  // Sign a message
-  signMessage(payload: SignMessagePayload): Promise<string>;
+  // Sign a message (payload is already decoded from JSON string)
+  signMessage(payload: any): Promise<string>;
   
-  // Sign a transaction
-  signTransaction(payload: SignTransactionPayload): Promise<string>;
+  // Sign a transaction (payload is already decoded from JSON string)
+  signTransaction(payload: any): Promise<string>;
+  
+  // Optional: Batch sign multiple transactions (e.g., Solana)
+  signAllTransactions?(transactions: any[]): Promise<string[]>;
+  
+  // Optional: Sign and broadcast transaction immediately (e.g., EVM)
+  sendTransaction?(payload: any): Promise<string>;
 }
 ```
 
 **Implementation Notes:**
-- The SDK's `RequestHandler` calls `signer.signMessage()` or `signer.signTransaction()` based on request type
+- The SDK's `RequestHandler` automatically decodes payload from JSON string before calling signer methods
 - The signer implementation handles chain-specific signing logic (EVM vs Solana)
-- For `sign_message`: Returns signature string directly
-- For `sign_transaction`: Returns transaction hash string directly
+- For `sign_message`: Calls `signer.signMessage(decodedPayload)` → Returns signature string
+- For `sign_transaction`: Calls `signer.signTransaction(decodedPayload)` → Returns signature string
+- For `sign_all_transactions`: Calls `signer.signAllTransactions(decodedPayload.transactions)` → Returns array of signatures
+- For `send_transaction`: Calls `signer.sendTransaction(decodedPayload)` or falls back to `signTransaction()` → Returns transaction hash
 - The SDK wraps the result in the response payload structure
 
 ---
@@ -785,9 +946,40 @@ const session = {
 };
 ```
 
+### Payload Encoding/Decoding
+
+**Why JSON-encoded strings?**
+- Supports multiple blockchain formats (EVM, Solana, etc.) without tight coupling
+- Allows chain-specific transaction structures to be passed generically
+- SDK handles encoding/decoding automatically
+
+**Encoding (DAPP side):**
+```js
+// SDK automatically encodes payloads
+const payloadObject = { message: "Hello" };
+const payloadString = JSON.stringify(payloadObject);
+// payloadString: '{"message":"Hello"}'
+```
+
+**Decoding (Wallet side):**
+```js
+// SDK automatically decodes payloads before calling signer
+const payloadString = request.payload; // '{"message":"Hello"}'
+const decodedPayload = JSON.parse(payloadString);
+// decodedPayload: { message: "Hello" }
+// signer.signMessage(decodedPayload) receives the object
+```
+
+**Chain-specific payloads:**
+- EVM: `{ to, value, data, gasLimit, ... }`
+- Solana: `{ instructions, recentBlockhash, ... }`
+- All encoded as JSON strings in the protocol layer
+
 ### Request ID Format
 - `msg-{timestamp}-{random}`: For sign message requests (e.g., `msg-1699234567890-abc123`)
-- `tx-{timestamp}-{random}`: For transaction requests (e.g., `tx-1699234567890-xyz789`)
+- `tx-{timestamp}-{random}`: For sign transaction requests (e.g., `tx-1699234567890-xyz789`)
+- `all-{timestamp}-{random}`: For batch sign all transactions (e.g., `all-1699234567890-abc123`)
+- `send-{timestamp}-{random}`: For send transaction requests (e.g., `send-1699234567890-xyz789`)
 
 ### Chain Type Values
 - `"evm"`: For Ethereum Virtual Machine chains
@@ -805,13 +997,17 @@ const session = {
 |--------|---------------------|-------------------|
 | Event names | `web:signMessage`, `mobile:response` | `dapp:request`, `wallet:response` |
 | Operation types | Separate flows | Single unified flow with `type` field |
-| Request types | `"signMessage"`, `"signTransaction"` | `"sign_message"`, `"sign_transaction"` |
+| Request types | `"signMessage"`, `"signTransaction"` | `"sign_message"`, `"sign_transaction"`, `"sign_all_transactions"`, `"send_transaction"` |
 | Request ID field | `requestId` | `id` |
-| Request structure | Flat (message/transaction at root) | Nested (`payload` object) |
+| Request structure | Flat (message/transaction at root) | Nested (`payload` as JSON-encoded string) |
+| Payload format | Direct objects | JSON-encoded strings (generic, multi-chain) |
 | Chain support | Implicit (EVM only) | Explicit `chainType` and `chainId` |
 | Response status | `approved: boolean` | `status: "success" \| "error"` |
+| Response results | Single signature/txHash | Single or array (signature/signatures/txHash) |
 | Error handling | `result.reason` | `error` field |
-| Signing interface | Not specified | `WalletSigner` interface |
+| Signing interface | Not specified | `WalletSigner` interface with optional methods |
+| Batch signing | Not supported | Supported via `sign_all_transactions` |
+| Direct send | Not supported | Supported via `send_transaction` |
 | Extensibility | Low | High (easy to add new chains/operations) |
 
 ---
@@ -820,9 +1016,13 @@ const session = {
 
 1. **Single Implementation**: One flow handles all sign operations
 2. **Standardized Events**: Consistent `dapp:request` / `wallet:response` pattern
-3. **Multi-Chain Ready**: Built-in support for multiple blockchains
+3. **Multi-Chain Ready**: Built-in support for multiple blockchains via generic payload encoding
 4. **Type Safety**: `type` field makes operation explicit
 5. **Error Handling**: Unified error response format
-6. **Easy to Extend**: Add new operations or chains without changing flow structure
-7. **Maintainability**: Single codebase for all sign operations
+6. **Batch Operations**: Support for batch signing (e.g., Solana's signAllTransactions)
+7. **Direct Send**: Support for immediate broadcast (e.g., EVM's sendTransaction)
+8. **Generic Payloads**: JSON-encoded strings support any chain-specific format
+9. **Easy to Extend**: Add new operations or chains without changing flow structure
+10. **Maintainability**: Single codebase for all sign operations
+11. **Flexible Signer Interface**: Optional methods for advanced operations
 

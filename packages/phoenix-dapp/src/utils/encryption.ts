@@ -43,9 +43,9 @@ export class EncryptionManager {
   private keyPair: nacl.BoxKeyPair;
   private peerPublicKey?: Uint8Array;
 
-  constructor() {
-    // Generate ephemeral key pair
-    this.keyPair = nacl.box.keyPair();
+  constructor(keyPair?: nacl.BoxKeyPair) {
+    // Use provided key pair or generate new one
+    this.keyPair = keyPair || nacl.box.keyPair();
   }
 
   /**
@@ -56,10 +56,51 @@ export class EncryptionManager {
   }
 
   /**
+   * Get secret key as base64 string (for persistence)
+   */
+  getSecretKey(): string {
+    return uint8ArrayToBase64(this.keyPair.secretKey);
+  }
+
+  /**
+   * Export key pair for persistence
+   */
+  exportKeyPair(): { publicKey: string; secretKey: string } {
+    return {
+      publicKey: this.getPublicKey(),
+      secretKey: this.getSecretKey(),
+    };
+  }
+
+  /**
+   * Import key pair from persistence
+   */
+  static importKeyPair(keyPairData: { publicKey: string; secretKey: string }): nacl.BoxKeyPair {
+    return {
+      publicKey: base64ToUint8Array(keyPairData.publicKey),
+      secretKey: base64ToUint8Array(keyPairData.secretKey),
+    };
+  }
+
+  /**
    * Set peer's public key
    */
   setPeerPublicKey(publicKeyBase64: string): void {
     this.peerPublicKey = base64ToUint8Array(publicKeyBase64);
+  }
+
+  /**
+   * Get peer's public key (for persistence)
+   */
+  getPeerPublicKey(): string | undefined {
+    return this.peerPublicKey ? uint8ArrayToBase64(this.peerPublicKey) : undefined;
+  }
+
+  /**
+   * Check if peer public key is set
+   */
+  hasPeerPublicKey(): boolean {
+    return this.peerPublicKey !== undefined;
   }
 
   /**

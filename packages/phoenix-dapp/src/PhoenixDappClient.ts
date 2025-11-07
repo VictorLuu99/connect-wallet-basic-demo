@@ -6,6 +6,8 @@ import {
   ConnectionResult,
   SignMessageParams,
   SignTransactionParams,
+  SignAllTransactionsParams,
+  SendTransactionParams,
   Session,
   SignRequest,
   SignResponse,
@@ -14,10 +16,13 @@ import {
   EncryptedMessage,
 } from './types';
 import { EncryptionManager } from './utils/encryption';
-import { QRCodeGenerator } from './core/QRCodeGenerator';
+import { URIEncoder } from './core/URIEncoder';
 import { RequestManager } from './core/RequestManager';
 import { SOCKET_EVENTS, TIMEOUTS } from './utils/constants';
 import { isValidTimestamp } from './utils/validation';
+import { SessionStorage } from './utils/sessionStorage';
+import { getDefaultStorageAdapter } from './utils/storage';
+import { encodePayload } from './utils/payload';
 
 /**
  * Phoenix DAPP Client
@@ -28,24 +33,37 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
   private encryption: EncryptionManager;
   private requestManager: RequestManager;
   private session?: Session;
-  private config: Required<PhoenixDappConfig>;
+  private config: Required<PhoenixDappConfig> & { storage?: any; enablePersistence?: boolean };
+  private sessionStorage: SessionStorage;
 
   constructor(config: PhoenixDappConfig) {
     super();
+
+    const storage = config.storage || getDefaultStorageAdapter();
+    const enablePersistence = config.enablePersistence !== false;
 
     this.config = {
       serverUrl: config.serverUrl,
       reconnect: config.reconnect ?? true,
       reconnectAttempts: config.reconnectAttempts ?? 5,
       reconnectDelay: config.reconnectDelay ?? 2000,
+      storage,
+      enablePersistence,
     };
 
+    this.sessionStorage = new SessionStorage(storage, enablePersistence);
     this.encryption = new EncryptionManager();
     this.requestManager = new RequestManager(TIMEOUTS.REQUEST_TIMEOUT);
+
+    // Try to restore session on initialization
+    this.restoreSession().catch((error) => {
+      console.warn('[Phoenix DAPP] Failed to restore session:', error);
+    });
   }
 
   /**
-   * Connect and generate QR code for wallet scanning
+   * Connect and generate connection URI for wallet scanning
+   * Note: QR code generation should be handled by the application layer
    */
   async connect(): Promise<ConnectionResult> {
     if (this.session?.connected) {
@@ -63,9 +81,8 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
       publicKey,
     };
 
-    // Generate QR code
-    const qrCodeUrl = await QRCodeGenerator.generateQRCode(connectionData);
-    const uri = QRCodeGenerator.encodeURI(connectionData);
+    // Encode connection data to URI
+    const uri = URIEncoder.encodeURI(connectionData);
 
     // Initialize session
     this.session = {
@@ -73,10 +90,15 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
       connected: false,
     };
 
+    // Save initial session (before wallet connects)
+    await this.sessionStorage.saveSession(this.session, this.config.serverUrl, this.encryption).catch((error) => {
+      console.warn('[Phoenix DAPP] Failed to save initial session:', error);
+    });
+
     // Connect socket
     await this.connectSocket(uuid);
 
-    return { qrCodeUrl, uri, uuid };
+    return { uri, uuid };
   }
 
   /**
@@ -87,14 +109,18 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
 
     const requestId = this.requestManager.generateRequestId('sign_message');
 
+    // Encode payload to JSON string for multi-chain support
+    const payload = typeof params.message === 'string' 
+      ? { message: params.message }
+      : params.message;
+    const encodedPayload = encodePayload(payload);
+
     const request: SignRequest = {
       id: requestId,
       type: 'sign_message',
       chainType: params.chainType,
       chainId: params.chainId,
-      payload: {
-        message: params.message,
-      },
+      payload: encodedPayload,
       timestamp: Date.now(),
     };
 
@@ -109,12 +135,61 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
 
     const requestId = this.requestManager.generateRequestId('sign_transaction');
 
+    // Encode payload to JSON string for multi-chain support
+    const encodedPayload = encodePayload(params.transaction);
+
     const request: SignRequest = {
       id: requestId,
       type: 'sign_transaction',
       chainType: params.chainType,
       chainId: params.chainId,
-      payload: params.transaction,
+      payload: encodedPayload,
+      timestamp: Date.now(),
+    };
+
+    return this.sendRequest(request);
+  }
+
+  /**
+   * Sign all transactions (for batch signing, e.g., Solana)
+   */
+  async signAllTransactions(params: SignAllTransactionsParams): Promise<SignResponse> {
+    this.ensureConnected();
+
+    const requestId = this.requestManager.generateRequestId('sign_all_transactions');
+
+    // Encode payload to JSON string for multi-chain support
+    const encodedPayload = encodePayload({ transactions: params.transactions });
+
+    const request: SignRequest = {
+      id: requestId,
+      type: 'sign_all_transactions',
+      chainType: params.chainType,
+      chainId: params.chainId,
+      payload: encodedPayload,
+      timestamp: Date.now(),
+    };
+
+    return this.sendRequest(request);
+  }
+
+  /**
+   * Send transaction (sign and broadcast immediately, e.g., EVM)
+   */
+  async sendTransaction(params: SendTransactionParams): Promise<SignResponse> {
+    this.ensureConnected();
+
+    const requestId = this.requestManager.generateRequestId('send_transaction');
+
+    // Encode payload to JSON string for multi-chain support
+    const encodedPayload = encodePayload(params.transaction);
+
+    const request: SignRequest = {
+      id: requestId,
+      type: 'send_transaction',
+      chainType: params.chainType,
+      chainId: params.chainId,
+      payload: encodedPayload,
       timestamp: Date.now(),
     };
 
@@ -132,6 +207,11 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
 
     this.requestManager.clearAll();
     this.session = undefined;
+
+    // Clear stored session
+    this.sessionStorage.clearSession().catch((error) => {
+      console.warn('[Phoenix DAPP] Failed to clear session:', error);
+    });
 
     this.emit('session_disconnected');
   }
@@ -220,6 +300,13 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
       this.session.connected = true;
     }
 
+    // Save session to storage
+    if (this.session) {
+      this.sessionStorage.saveSession(this.session, this.config.serverUrl, this.encryption).catch((error) => {
+        console.warn('[Phoenix DAPP] Failed to save session:', error);
+      });
+    }
+
     console.log('[Phoenix DAPP] Wallet connected to session:', uuid);
     this.emit('session_connected', this.session!);
   }
@@ -280,6 +367,68 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
     } catch (error) {
       console.error('[Phoenix DAPP] Failed to handle response:', error);
       this.emit('error', error as Error);
+    }
+  }
+
+  /**
+   * Restore session from storage and reconnect
+   */
+  private async restoreSession(): Promise<void> {
+    const storedData = await this.sessionStorage.loadSession();
+    if (!storedData) {
+      return;
+    }
+
+    // Verify server URL matches
+    if (storedData.serverUrl !== this.config.serverUrl) {
+      console.warn('[Phoenix DAPP] Stored session server URL mismatch, clearing session');
+      await this.sessionStorage.clearSession();
+      return;
+    }
+
+    // Restore encryption keys
+    this.encryption = this.sessionStorage.restoreEncryption(storedData);
+
+    // Restore session
+    this.session = storedData.session;
+
+    // If session was connected, try to reconnect
+    if (storedData.session.connected && storedData.peerPublicKey) {
+      console.log('[Phoenix DAPP] Restoring session, attempting to reconnect...');
+      try {
+        await this.reconnect();
+      } catch (error) {
+        console.warn('[Phoenix DAPP] Failed to reconnect, clearing session:', error);
+        // Clear invalid session
+        this.session = undefined;
+        await this.sessionStorage.clearSession();
+      }
+    }
+  }
+
+  /**
+   * Reconnect to existing session
+   */
+  private async reconnect(): Promise<void> {
+    if (!this.session) {
+      throw new Error('No session to reconnect');
+    }
+
+    const uuid = this.session.uuid;
+
+    // Connect socket
+    await this.connectSocket(uuid);
+
+    // Re-join room (socket.io will handle reconnection)
+    if (this.socket && this.socket.connected) {
+      this.socket.emit(SOCKET_EVENTS.JOIN, { uuid });
+      console.log('[Phoenix DAPP] Rejoined room:', uuid);
+
+      // If we have peer public key, we can consider ourselves connected
+      if (this.encryption.hasPeerPublicKey()) {
+        this.session.connected = true;
+        this.emit('session_connected', this.session);
+      }
     }
   }
 

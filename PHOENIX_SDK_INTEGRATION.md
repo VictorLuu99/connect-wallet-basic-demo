@@ -115,8 +115,11 @@ npm start
 **Key Simplifications:**
 - ❌ No manual `generateKeyPair()`, `encryptMessage()`, `decryptMessage()`
 - ❌ No socket event management
-- ❌ No QR code URI encoding
+- ❌ No QR code generation (SDK returns URI, app generates QR)
+- ❌ No session persistence logic
 - ✅ Just use `phoenixClient.connect()`, `phoenixClient.signMessage()`
+- ✅ Session automatically persisted and restored on reload
+- ✅ Multi-chain support with generic payloads
 
 ### Wallet App Reduction
 
@@ -132,9 +135,12 @@ npm start
 - ❌ No manual encryption/decryption
 - ❌ No socket event wiring
 - ❌ No QR parsing logic
-- ✅ Implement `WalletSigner` interface
+- ❌ No session persistence logic
+- ✅ Implement `WalletSigner` interface (payloads auto-decoded)
 - ✅ Use `phoenixClient.connect(qrData, signer)`
 - ✅ Call `phoenixClient.approveRequest()` or `rejectRequest()`
+- ✅ Session automatically persisted and restored on reload
+- ✅ Support batch signing and direct send
 
 ---
 
@@ -142,11 +148,13 @@ npm start
 
 ### For dApp Developers
 
-1. **Simpler API**: 3 main methods instead of 20+ functions
+1. **Simpler API**: Clean methods for all operations
    ```typescript
-   await phoenixClient.connect();              // Generate QR
-   await phoenixClient.signMessage({...});     // Sign message
-   await phoenixClient.signTransaction({...}); // Sign transaction
+   await phoenixClient.connect();                    // Generate URI
+   await phoenixClient.signMessage({...});           // Sign message
+   await phoenixClient.signTransaction({...});       // Sign transaction
+   await phoenixClient.signAllTransactions({...});   // Batch signing (Solana)
+   await phoenixClient.sendTransaction({...});       // Direct send (EVM)
    ```
 
 2. **Built-in Security**: E2E encryption, timestamp validation, replay protection
@@ -164,8 +172,21 @@ npm start
 1. **Pluggable Signing**: Implement `WalletSigner`, SDK handles the rest
    ```typescript
    class MyWalletSigner implements WalletSigner {
-     signMessage(params) { return myWallet.sign(params); }
-     signTransaction(params) { return myWallet.signTx(params); }
+     // Payloads are automatically decoded from JSON strings
+     signMessage(params: any) { 
+       return myWallet.sign(params.message || params); 
+     }
+     signTransaction(params: any) { 
+       return myWallet.signTx(params); 
+     }
+     // Optional: For batch signing (Solana)
+     signAllTransactions(transactions: any[]) {
+       return myWallet.signAll(transactions);
+     }
+     // Optional: For direct send (EVM)
+     sendTransaction(params: any) {
+       return myWallet.send(params);
+     }
    }
    ```
 
@@ -200,10 +221,29 @@ npm start
 
 ### Test Sign Transaction
 
-- [ ] Web: Enter transaction details → Click "Send Transaction"
+- [ ] Web: Enter transaction details → Click "Sign Transaction"
 - [ ] Wallet: Approval modal shows transaction details
 - [ ] Wallet: Click "Approve"
-- [ ] Web: Displays transaction hash
+- [ ] Web: Displays transaction signature
+
+### Test Batch Signing (Solana)
+
+- [ ] Web: Call `signAllTransactions()` with array of transactions
+- [ ] Wallet: Approval modal shows batch transactions
+- [ ] Wallet: Click "Approve"
+- [ ] Web: Displays array of signatures
+
+### Test Direct Send (EVM)
+
+- [ ] Web: Call `sendTransaction()` with transaction
+- [ ] Wallet: Approval modal shows transaction
+- [ ] Wallet: Click "Approve"
+- [ ] Web: Displays transaction hash (broadcasted)
+
+### Test Session Persistence
+
+- [ ] Web: Connect wallet → Reload page → Session restored automatically
+- [ ] Wallet: Connect to dApp → Reload app → Session restored (call `reconnectWithSigner`)
 
 ### Test Rejection
 
@@ -243,8 +283,19 @@ socket.emit('web:signMessage', { uuid, encryptedPayload, nonce });
 **After (Phoenix SDK):**
 ```javascript
 // SDK handles everything
-const { qrCodeUrl } = await phoenixClient.connect();
-const response = await phoenixClient.signMessage({ message, chainType, chainId });
+const { uri } = await phoenixClient.connect();
+// Generate QR code from URI using your preferred library
+import { QRCodeSVG } from 'qrcode.react';
+<QRCodeSVG value={uri} size={300} />
+
+// Sign message (payload auto-encoded)
+const response = await phoenixClient.signMessage({ 
+  message, // Can be string or object
+  chainType, 
+  chainId 
+});
+
+// Session automatically persisted - restored on reload
 ```
 
 ### Wallet App Changes
@@ -280,12 +331,16 @@ socket.emit('mobile:response', { uuid, encryptedPayload, nonce });
 
 **After (Phoenix SDK):**
 ```typescript
-// Implement signer interface
+// Implement signer interface (payloads auto-decoded)
 const signer: WalletSigner = {
   address: wallet.address,
   chainType: 'evm',
-  signMessage: (params) => wallet.signMessage(params.message),
-  signTransaction: (params) => wallet.signTransaction(params)
+  // params is already decoded from JSON string
+  signMessage: (params: any) => wallet.signMessage(params.message || params),
+  signTransaction: (params: any) => wallet.signTransaction(params),
+  // Optional methods
+  signAllTransactions: (transactions: any[]) => wallet.signAll(transactions),
+  sendTransaction: (params: any) => wallet.sendTransaction(params),
 };
 
 // Connect
@@ -295,6 +350,11 @@ await phoenixClient.connect(qrData, signer);
 phoenixClient.on('sign_request', async (request) => {
   // Show approval UI, then:
   await phoenixClient.approveRequest(request.id); // SDK signs via signer
+});
+
+// Session automatically persisted - restored on reload
+phoenixClient.on('session_restored', async (session) => {
+  await phoenixClient.reconnectWithSigner(signer);
 });
 ```
 
@@ -335,13 +395,33 @@ The Phoenix SDKs use the same socket events as your current implementation:
 
 ---
 
+## 🆕 New Features
+
+### Multi-Chain Support
+- **Generic Payloads**: Payloads are JSON-encoded strings, supporting any blockchain
+- **Chain-Specific Types**: Convenience types for EVM and Solana available
+- **Flexible Signing**: Support for batch signing (Solana) and direct send (EVM)
+
+### Session Persistence
+- **Auto-Restore**: Sessions automatically restored on page/app reload
+- **Storage Adapters**: Support for localStorage (web) and AsyncStorage (React Native)
+- **Auto-Reconnect**: Automatically reconnects if session was connected
+
+### New Methods
+- `signAllTransactions()` - Batch signing for Solana
+- `sendTransaction()` - Direct send for EVM
+- `reconnectWithSigner()` - Reconnect to stored session
+- `hasStoredSession()` - Check for stored session
+
 ## 📚 Next Steps
 
 1. **Test both implementations** side by side
 2. **Compare user experience** and code simplicity
 3. **Switch to Phoenix SDK** when ready
 4. **Remove old crypto/encryption files** after migration
-5. **Publish SDKs** to npm when stable
+5. **Test session persistence** on reload
+6. **Test multi-chain features** (batch signing, direct send)
+7. **Publish SDKs** to npm when stable
 
 ---
 

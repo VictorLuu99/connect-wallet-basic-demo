@@ -19,31 +19,55 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 // Import polyfill FIRST - must be before SDK imports
 import '@/crypto-polyfill';
-import { PhoenixWalletClient, WalletSigner, SignRequest, Session } from '@vincenttaylorlab3/phoenix-wallet';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { 
+  PhoenixWalletClient, 
+  WalletSigner, 
+  SignRequest, 
+  Session,
+  AsyncStorageAdapter,
+  decodePayload,
+} from '@vincenttaylorlab3/phoenix-wallet';
+
 // Mock wallet signer implementation
+// Payloads are automatically decoded from JSON strings by SDK
 class MockWalletSigner implements WalletSigner {
   address = '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0';
   chainType = 'evm' as const;
 
-  async signMessage(params: { message: string }): Promise<string> {
-    console.log('🔏 Signing message:', params.message);
+  // params is already decoded from JSON string
+  async signMessage(params: any): Promise<string> {
+    const message = typeof params === 'string' ? params : params.message || params;
+    console.log('🔏 Signing message:', message);
     // In production, use actual wallet signing logic
-    // Example: await wallet.signMessage(params.message);
-    return `0xmock_signature_${Date.now()}_for_${params.message.substring(0, 10)}`;
+    return `0xmock_signature_${Date.now()}_for_${String(message).substring(0, 10)}`;
   }
 
+  // params is already decoded from JSON string
   async signTransaction(params: any): Promise<string> {
     console.log('🔏 Signing transaction:', params);
-    // In production, sign and broadcast transaction
-    // Example:
-    // const signedTx = await wallet.signTransaction(params);
-    // const txHash = await provider.sendTransaction(signedTx);
-    // return txHash;
+    // In production, sign transaction
+    // Example: const signedTx = await wallet.signTransaction(params);
+    return `0xmock_tx_signature_${Date.now()}`;
+  }
+
+  // Optional: For batch signing (e.g., Solana)
+  async signAllTransactions(transactions: any[]): Promise<string[]> {
+    console.log('🔏 Signing batch transactions:', transactions.length);
+    // In production, sign all transactions
+    return transactions.map((_, idx) => `0xmock_batch_sig_${Date.now()}_${idx}`);
+  }
+
+  // Optional: For direct send (e.g., EVM)
+  async sendTransaction(params: any): Promise<string> {
+    console.log('🔏 Sending transaction:', params);
+    // In production, sign and broadcast immediately
+    // Example: const txHash = await provider.sendTransaction(signedTx);
     return `0xmock_tx_hash_${Date.now()}`;
   }
 }
 
-export default function IndexPhoenixSDK() {
+export default function Index() {
   // QR Scanner state
   const [permission, requestPermission] = useCameraPermissions();
   const [scanning, setScanning] = useState(false);
@@ -62,13 +86,52 @@ export default function IndexPhoenixSDK() {
   // Wallet signer instance
   const [signer] = useState(() => new MockWalletSigner());
 
-  // Phoenix Wallet Client instance
-  const [phoenixClient] = useState(() => new PhoenixWalletClient());
+  // Phoenix Wallet Client instance with AsyncStorage for session persistence
+  const [phoenixClient] = useState(() => new PhoenixWalletClient({
+    storage: new AsyncStorageAdapter(AsyncStorage),
+    enablePersistence: true, // Auto-restore session on reload
+  }));
 
   /**
-   * Setup Phoenix SDK event listeners
+   * Setup Phoenix SDK event listeners and check for restored session
    */
   useEffect(() => {
+    // Check if session was restored on mount
+    const checkSession = async () => {
+      const hasStored = await phoenixClient.hasStoredSession();
+      if (hasStored) {
+        const currentSession = phoenixClient.getSession();
+        if (currentSession) {
+          console.log('📦 Stored session found, ready to reconnect');
+          // Session restored, but need signer to fully reconnect
+          Alert.alert(
+            'Session Restored',
+            'Previous session found. Reconnect?',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Reconnect',
+                onPress: async () => {
+                  try {
+                    await phoenixClient.reconnectWithSigner(signer);
+                  } catch (error: any) {
+                    Alert.alert('Reconnect Failed', error.message);
+                  }
+                },
+              },
+            ]
+          );
+        }
+      }
+    };
+    checkSession();
+
+    // Session restored (from storage)
+    phoenixClient.on('session_restored', (sessionData) => {
+      console.log('📦 Session restored:', sessionData);
+      // User can call reconnectWithSigner() to fully reconnect
+    });
+
     // Session connected
     phoenixClient.on('session_connected', (sessionData) => {
       console.log('✅ Connected to dApp:', sessionData);
@@ -185,7 +248,7 @@ export default function IndexPhoenixSDK() {
     // }
     // setScanning(true);
     // Test data - Phoenix URI format: phoenix:{JSON}
-    const phoenixURI = `phoenix:{"version":"1","uuid":"0d5f4392-9aee-47f6-b61c-94b6d42bd357","serverUrl":"http://localhost:3001","publicKey":"guaeQmXesZfeaYOvyCrPMNQPst7q3NsUoZRI9/O4KQA="}`
+    const phoenixURI = `phoenix:{"version":"1","uuid":"9eb47c7f-14bd-42a8-8749-31a679fb9506","serverUrl":"http://localhost:3001","publicKey":"E58YNn6OeyqcU+SOkiNFwavdGB73SwOJZQM4TLFu9XQ="}`
     handleQRScanned({ data: phoenixURI });
   };
 
@@ -195,16 +258,31 @@ export default function IndexPhoenixSDK() {
   const renderApprovalModal = () => {
     if (!pendingRequest) return null;
 
+    // Decode payload from JSON string
+    let decodedPayload: any;
+    try {
+      decodedPayload = decodePayload(pendingRequest.payload);
+    } catch (error) {
+      console.error('Failed to decode payload:', error);
+      decodedPayload = { error: 'Failed to decode payload' };
+    }
+
     const isMessage = pendingRequest.type === 'sign_message';
-    const payload = pendingRequest.payload as any;
+    const isBatch = pendingRequest.type === 'sign_all_transactions';
+    const isSend = pendingRequest.type === 'send_transaction';
+
+    const getTitle = () => {
+      if (isMessage) return '✍️ Sign Message';
+      if (isBatch) return '📦 Sign All Transactions';
+      if (isSend) return '💸 Send Transaction';
+      return '✍️ Sign Transaction';
+    };
 
     return (
       <Modal visible={true} animationType="slide" transparent={true}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>
-              {isMessage ? '✍️ Sign Message' : '💸 Sign Transaction'}
-            </Text>
+            <Text style={styles.modalTitle}>{getTitle()}</Text>
 
             <View style={styles.detailsContainer}>
               <View style={styles.detailRow}>
@@ -218,19 +296,42 @@ export default function IndexPhoenixSDK() {
                 <>
                   <View style={styles.detailRow}>
                     <Text style={styles.label}>Message:</Text>
-                    <Text style={styles.value}>{payload.message}</Text>
+                    <Text style={styles.value}>
+                      {decodedPayload.message || decodedPayload}
+                    </Text>
                   </View>
+                </>
+              ) : isBatch ? (
+                <>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.label}>Transactions:</Text>
+                    <Text style={styles.value}>
+                      {Array.isArray(decodedPayload.transactions) 
+                        ? `${decodedPayload.transactions.length} transactions`
+                        : 'Invalid batch'}
+                    </Text>
+                  </View>
+                  {Array.isArray(decodedPayload.transactions) && decodedPayload.transactions.map((tx: any, idx: number) => (
+                    <View key={idx} style={styles.detailRow}>
+                      <Text style={styles.label}>Tx {idx + 1}:</Text>
+                      <Text style={styles.valueSmall}>
+                        {tx.to || 'N/A'} - {tx.value || '0'} Wei
+                      </Text>
+                    </View>
+                  ))}
                 </>
               ) : (
                 <>
                   <View style={styles.detailRow}>
                     <Text style={styles.label}>To:</Text>
-                    <Text style={styles.valueSmall}>{payload.to}</Text>
+                    <Text style={styles.valueSmall}>{decodedPayload.to || 'N/A'}</Text>
                   </View>
 
                   <View style={styles.detailRow}>
                     <Text style={styles.label}>Amount:</Text>
-                    <Text style={styles.value}>{payload.value} Wei</Text>
+                    <Text style={styles.value}>
+                      {decodedPayload.value || '0'} Wei
+                    </Text>
                   </View>
 
                   <View style={styles.detailRow}>
