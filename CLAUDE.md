@@ -55,12 +55,22 @@ npm run ios        # Run on iOS (macOS only)
 
 ### Phoenix SDKs (Protocol Packages)
 ```bash
-# Build both SDKs
+# Build both SDKs using helper script (recommended)
+cd packages
+./build-all.sh
+
+# Or build individually
 cd packages/phoenix-dapp && npm run build
 cd packages/phoenix-wallet && npm run build
 
-# Or build from root if workspace configured
-npm run build:sdks
+# Clean build artifacts
+cd packages
+./clean-all.sh
+
+# Publishing SDKs (maintainers only)
+cd packages
+./publish-sdk.sh         # Full publish with safety checks
+./quick-publish.sh       # Quick publish (skip checks)
 ```
 
 ### Testing
@@ -389,8 +399,6 @@ Before production deployment:
 
 ## Troubleshooting
 
-See `TROUBLESHOOTING.md` for detailed solutions.
-
 **Quick fixes**:
 - Metro cache issues: `npx expo start --clear`
 - Port conflicts: `lsof -ti:3001 | xargs kill -9`
@@ -401,7 +409,10 @@ See `TROUBLESHOOTING.md` for detailed solutions.
 ## Additional Resources
 
 - **README.md** - Full project documentation in Vietnamese
-- **QUICKSTART.md** - 5-minute setup guide
+- **packages/QUICKSTART.md** - 5-minute setup guide
 - **PHOENIX_SDK_INTEGRATION.md** - SDK integration guide with code comparison
+- **SESSION_PERSISTENCE_BUG_TESTING.md** - Session persistence bug testing documentation
+- **WALLET_RELOAD_BUG_TESTING.md** - Wallet reload bug testing documentation
 - **packages/phoenix-dapp/README.md** - dApp SDK API reference
 - **packages/phoenix-wallet/README.md** - Wallet SDK API reference
+- **packages/PUBLISHING_GUIDE.md** - SDK publishing guide for maintainers

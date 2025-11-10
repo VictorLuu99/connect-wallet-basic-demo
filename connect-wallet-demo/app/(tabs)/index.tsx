@@ -208,9 +208,17 @@ export default function Index() {
       console.log('📱 QR Scanned:', data);
       console.log('signer:', signer);
 
-      // Parse the scanned QR to get UUID
-      const phoenixData = JSON.parse(data.replace('phoenix:', ''));
-      const scannedUUID = phoenixData.uuid;
+      // Parse the scanned QR to get UUID (supports both old JSON and new query param format)
+      let scannedUUID: string;
+      if (data.startsWith('phoenix://connect?')) {
+        // New format: phoenix://connect?version=1&uuid=xxx&...
+        const url = new URL(data);
+        scannedUUID = url.searchParams.get('uuid') || '';
+      } else {
+        // Legacy format: phoenix:{JSON}
+        const phoenixData = JSON.parse(data.replace('phoenix:', ''));
+        scannedUUID = phoenixData.uuid;
+      }
 
       // Check if already connected to a different session
       const currentSession = phoenixClient.getSession();
@@ -219,7 +227,7 @@ export default function Index() {
         phoenixClient.disconnect();
       }
 
-      // Connect using Phoenix SDK
+      // Connect using Phoenix SDK (SDK handles parsing internally)
       await phoenixClient.connect(data, signer);
 
       console.log('🔗 Connected to dApp');
@@ -279,7 +287,7 @@ export default function Index() {
     // }
     // setScanning(true);
     // Test data - Phoenix URI format: phoenix:{JSON}
-    const phoenixURI = `phoenix:{"version":"1","uuid":"75a4c0fd-8350-4dc3-8f5a-55f4ae7f9b2b","serverUrl":"http://localhost:3001","publicKey":"svtQ5MqDUw++lN9xbennvnPhM5CXdqqTN2jJgE95/yQ="}`
+    const phoenixURI = `phoenix://connect?version=1&uuid=66e72b66-38e8-47a0-82c3-2044fc7817ef&serverUrl=http%3A%2F%2Flocalhost%3A3001&publicKey=41qSsdt2CB5Vsu2x7wsoXt3mVSyAJ5Y9am%2BpIlMn3QI%3D`
     handleQRScanned({ data: phoenixURI });
   };
 

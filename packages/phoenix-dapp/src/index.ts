@@ -46,3 +46,6 @@ export {
   getDefaultStorageAdapter,
 } from './utils/storage';
 export type { StorageAdapter as StorageAdapterType } from './utils/storage';
+
+// Export URI encoder
+export { URIEncoder } from './core/URIEncoder';
