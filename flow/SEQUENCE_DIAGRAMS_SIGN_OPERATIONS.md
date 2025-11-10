@@ -1,16 +1,17 @@
-# Sign Operations Flow - E2E Encrypted (Unified)
+# Sign Operations Flow - Phoenix Protocol SDK
 
 ## Overview
-Unified flow for DAPP to request wallet to sign messages or transactions. All communication is end-to-end encrypted using TweetNaCl. Backend only forwards encrypted messages without reading content. Supports multiple blockchain types (EVM, Solana) via `chainType` and `chainId`.
+Unified flow for dApp to request wallet to sign messages or transactions using the Phoenix Protocol SDK. All communication is end-to-end encrypted using TweetNaCl (Curve25519 + XSalsa20-Poly1305). The backend only forwards encrypted messages without reading content. Supports multiple blockchain types (EVM, Solana) via `chainType` and `chainId`.
 
 ## Prerequisites
-- DAPP and Wallet are connected (same UUID room)
-- Shared secret established via ECDH key exchange
+- dApp and Wallet are connected (same UUID room)
+- Shared secret established via ECDH key exchange during connection phase
 - Both parties in the same Socket.io room
+- Phoenix SDKs initialized on both sides
 
 ## Supported Operations
 - `sign_message`: Sign arbitrary message
-- `sign_transaction`: Sign transaction (returns signature)
+- `sign_transaction`: Sign transaction (returns signature, does not broadcast)
 - `sign_all_transactions`: Batch sign multiple transactions (e.g., Solana)
 - `send_transaction`: Sign and broadcast transaction immediately (e.g., EVM)
 
@@ -20,639 +21,457 @@ Unified flow for DAPP to request wallet to sign messages or transactions. All co
 
 ---
 
-## Mermaid Diagram
+## Mermaid Diagram - SDK Flow
 
 ```mermaid
 sequenceDiagram
     participant User
-    participant DAPP as DAPP<br/>(React)
+    participant DAppSDK as PhoenixDappClient<br/>(@phoenix-demo/dapp)
     participant Backend as Backend<br/>(Dumb Relay)
-    participant Wallet as Wallet<br/>(React Native)
-    participant Crypto as Crypto Module
+    participant WalletSDK as PhoenixWalletClient<br/>(@phoenix-demo/wallet)
+    participant Signer as WalletSigner<br/>(User Implementation)
 
-    Note over User,Crypto: Prerequisites: Wallet & DAPP Connected in Room
+    Note over User,Signer: Prerequisites: Wallet & dApp Connected via SDK
 
     alt Sign Message Flow
-        User->>DAPP: Enter message text<br/>Click "Sign Message"
-        activate DAPP
-        DAPP->>DAPP: Generate requestId<br/>(msg-{timestamp}-{random})
-        DAPP->>DAPP: Encode payload to JSON string:<br/>payloadStr = JSON.stringify({ message })
-        DAPP->>DAPP: Create request payload:<br/>{ id, type: 'sign_message',<br/>  chainType: 'evm', chainId: '1',<br/>  payload: payloadStr, timestamp }
-        DAPP->>DAPP: Encrypt with nacl.box:<br/>encrypted = nacl.box(payload, nonce,<br/>  walletPublicKey, dappSecretKey)
-        DAPP->>Backend: emit('dapp:request', {<br/>  uuid, encryptedPayload,<br/>  nonce, timestamp })
-        deactivate DAPP
+        User->>DAppSDK: client.signMessage({<br/>  message: "Hello",<br/>  chainType: "evm",<br/>  chainId: "1"<br/>})
+        activate DAppSDK
+        DAppSDK->>DAppSDK: RequestManager.generateRequestId('sign_message')<br/>→ "msg-{timestamp}-{random}"
+        DAppSDK->>DAppSDK: encodePayload({ message })<br/>→ JSON string
+        DAppSDK->>DAppSDK: Create SignRequest:<br/>{ id, type, chainType, chainId,<br/>  payload: string, timestamp }
+        DAppSDK->>DAppSDK: EncryptionManager.encrypt(request)<br/>→ { encrypted, nonce }
+        DAppSDK->>DAppSDK: RequestManager.addRequest(id, resolve, reject)<br/>→ Track pending request (60s timeout)
+        DAppSDK->>Backend: socket.emit('dapp:request', {<br/>  uuid, encryptedPayload,<br/>  nonce, timestamp })
+        deactivate DAppSDK
     else Sign Transaction Flow
-        User->>DAPP: Enter transaction details<br/>Click "Sign Transaction"
-        activate DAPP
-        DAPP->>DAPP: Generate requestId<br/>(tx-{timestamp}-{random})
-        DAPP->>DAPP: Encode payload to JSON string:<br/>payloadStr = JSON.stringify(transaction)
-        DAPP->>DAPP: Create request payload:<br/>{ id, type: 'sign_transaction',<br/>  chainType: 'evm', chainId: '1',<br/>  payload: payloadStr, timestamp }
-        DAPP->>DAPP: Encrypt with nacl.box
-        DAPP->>Backend: emit('dapp:request', {...})
-        deactivate DAPP
+        User->>DAppSDK: client.signTransaction({<br/>  transaction: {...},<br/>  chainType: "evm",<br/>  chainId: "1"<br/>})
+        activate DAppSDK
+        DAppSDK->>DAppSDK: RequestManager.generateRequestId('sign_transaction')<br/>→ "tx-{timestamp}-{random}"
+        DAppSDK->>DAppSDK: encodePayload(transaction)<br/>→ JSON string
+        DAppSDK->>DAppSDK: Create SignRequest & encrypt
+        DAppSDK->>Backend: socket.emit('dapp:request', {...})
+        deactivate DAppSDK
     else Sign All Transactions Flow (Batch)
-        User->>DAPP: Click "Sign All Transactions"
-        activate DAPP
-        DAPP->>DAPP: Generate requestId<br/>(all-{timestamp}-{random})
-        DAPP->>DAPP: Encode payload to JSON string:<br/>payloadStr = JSON.stringify({ transactions: [...] })
-        DAPP->>DAPP: Create request payload:<br/>{ id, type: 'sign_all_transactions',<br/>  chainType: 'solana', chainId: 'mainnet-beta',<br/>  payload: payloadStr, timestamp }
-        DAPP->>DAPP: Encrypt with nacl.box
-        DAPP->>Backend: emit('dapp:request', {...})
-        deactivate DAPP
+        User->>DAppSDK: client.signAllTransactions({<br/>  transactions: [...],<br/>  chainType: "solana",<br/>  chainId: "mainnet-beta"<br/>})
+        activate DAppSDK
+        DAppSDK->>DAppSDK: RequestManager.generateRequestId('sign_all_transactions')<br/>→ "txs-{timestamp}-{random}"
+        DAppSDK->>DAppSDK: encodePayload({ transactions })<br/>→ JSON string
+        DAppSDK->>DAppSDK: Create SignRequest & encrypt
+        DAppSDK->>Backend: socket.emit('dapp:request', {...})
+        deactivate DAppSDK
     else Send Transaction Flow (Direct Send)
-        User->>DAPP: Enter transaction details<br/>Click "Send Transaction"
-        activate DAPP
-        DAPP->>DAPP: Generate requestId<br/>(send-{timestamp}-{random})
-        DAPP->>DAPP: Encode payload to JSON string:<br/>payloadStr = JSON.stringify(transaction)
-        DAPP->>DAPP: Create request payload:<br/>{ id, type: 'send_transaction',<br/>  chainType: 'evm', chainId: '1',<br/>  payload: payloadStr, timestamp }
-        DAPP->>DAPP: Encrypt with nacl.box
-        DAPP->>Backend: emit('dapp:request', {...})
-        deactivate DAPP
+        User->>DAppSDK: client.sendTransaction({<br/>  transaction: {...},<br/>  chainType: "evm",<br/>  chainId: "1"<br/>})
+        activate DAppSDK
+        DAppSDK->>DAppSDK: RequestManager.generateRequestId('send_transaction')<br/>→ "send-{timestamp}-{random}"
+        DAppSDK->>DAppSDK: encodePayload(transaction)<br/>→ JSON string
+        DAppSDK->>DAppSDK: Create SignRequest & encrypt
+        DAppSDK->>Backend: socket.emit('dapp:request', {...})
+        deactivate DAppSDK
     end
 
     activate Backend
     Note over Backend: Backend CANNOT read content<br/>Just forward to room
     Backend->>Backend: Broadcast to room (uuid)<br/>(NO verification, just forward)
-    Backend->>Wallet: Broadcast: emit('wallet:request', {<br/>  uuid, encryptedPayload,<br/>  nonce, timestamp })
+    Backend->>WalletSDK: socket.emit('wallet:request', {<br/>  uuid, encryptedPayload,<br/>  nonce, timestamp })
     deactivate Backend
 
-    activate Wallet
-    Wallet->>Wallet: Receive wallet:request event
-    Wallet->>Wallet: Decrypt with nacl.box.open:<br/>payload = nacl.box.open(encrypted,<br/>  nonce, dappPublicKey, walletSecretKey)
-    Wallet->>Wallet: Extract: { id, type,<br/>  chainType, chainId, payload: string, ... }
-    Wallet->>Wallet: Decode payload from JSON string:<br/>decodedPayload = JSON.parse(payload)
-    Wallet->>Wallet: Verify timestamp (max 5 min)
-    Wallet->>Wallet: Validate request fields<br/>Check chainType matches signer
-    Wallet->>Wallet: Set pendingRequest state
+    activate WalletSDK
+    WalletSDK->>WalletSDK: Receive 'wallet:request' event
+    WalletSDK->>WalletSDK: EncryptionManager.decrypt(encryptedPayload, nonce)<br/>→ SignRequest
+    WalletSDK->>WalletSDK: RequestHandler.validateRequest(request)<br/>→ Check timestamp (5min), chainType match
+    WalletSDK->>WalletSDK: RequestHandler stores as pendingRequest
+    WalletSDK->>WalletSDK: emit('sign_request', request)
     
     alt type === 'sign_message'
-        Wallet->>Wallet: Show approval modal<br/>Display: decodedPayload.message<br/>Chain: {chainType, chainId}
+        WalletSDK->>User: Show approval modal<br/>Display: decodedPayload.message<br/>Chain: {chainType, chainId}
     else type === 'sign_transaction'
-        Wallet->>Wallet: Show approval modal<br/>Display: Transaction details<br/>(To, Value, From, Chain, Type)
+        WalletSDK->>User: Show approval modal<br/>Display: Transaction details<br/>(To, Value, From, Chain, Type)
     else type === 'sign_all_transactions'
-        Wallet->>Wallet: Show approval modal<br/>Display: Batch transactions<br/>(Count, Details, Chain)
+        WalletSDK->>User: Show approval modal<br/>Display: Batch transactions<br/>(Count, Details, Chain)
     else type === 'send_transaction'
-        Wallet->>Wallet: Show approval modal<br/>Display: Transaction details<br/>(Note: Will broadcast immediately)
+        WalletSDK->>User: Show approval modal<br/>Display: Transaction details<br/>(Note: Will broadcast immediately)
     end
-    deactivate Wallet
+    deactivate WalletSDK
 
-    Note over User,Wallet: User Reviews Request
+    Note over User,Signer: User Reviews Request
 
     alt User Approves ✅
-        User->>Wallet: Click "Approve"
-        activate Wallet
-        Wallet->>Wallet: Call handleApprove()
-        Wallet->>Crypto: Sign based on type & chainType
-        activate Crypto
+        User->>WalletSDK: client.approveRequest(requestId)
+        activate WalletSDK
+        WalletSDK->>WalletSDK: RequestHandler.approveRequest(requestId)
+        activate WalletSDK
+        WalletSDK->>WalletSDK: decodePayload(request.payload)<br/>→ Decoded payload object
+        WalletSDK->>Signer: Call signer method based on type
+        activate Signer
         alt type === 'sign_message'
-            Crypto->>Crypto: signer.signMessage(decodedPayload)<br/>(chainType-specific)
-            Crypto-->>Wallet: signature
+            Signer->>Signer: signer.signMessage(decodedPayload)<br/>(chainType-specific)
+            Signer-->>WalletSDK: signature: string
         else type === 'sign_transaction'
-            Crypto->>Crypto: signer.signTransaction(decodedPayload)<br/>(chainType-specific)
-            Crypto-->>Wallet: signature
+            Signer->>Signer: signer.signTransaction(decodedPayload)<br/>(chainType-specific)
+            Signer-->>WalletSDK: signature: string
         else type === 'sign_all_transactions'
-            Crypto->>Crypto: signer.signAllTransactions(decodedPayload.transactions)<br/>(chainType-specific)
-            Crypto-->>Wallet: signatures[] (array)
+            Signer->>Signer: signer.signAllTransactions(decodedPayload.transactions)<br/>(chainType-specific)
+            Signer-->>WalletSDK: signatures: string[]
         else type === 'send_transaction'
-            Crypto->>Crypto: signer.sendTransaction(decodedPayload)<br/>or signer.signTransaction() + broadcast<br/>(chainType-specific)
-            Crypto-->>Wallet: txHash
+            Signer->>Signer: signer.sendTransaction(decodedPayload)<br/>or signer.signTransaction() fallback<br/>(chainType-specific)
+            Signer-->>WalletSDK: txHash: string
         end
-        deactivate Crypto
+        deactivate Signer
         
-        Wallet->>Wallet: Create result object:<br/>- signature (single)<br/>- signatures[] (batch)<br/>- txHash (single)
-        Wallet->>Wallet: Create response payload:<br/>{ id, type, status: 'success',<br/>  result: { signature/signatures/txHash },<br/>  timestamp }
-        Wallet->>Wallet: Encrypt with nacl.box:<br/>encrypted = nacl.box(payload, nonce,<br/>  dappPublicKey, walletSecretKey)
-        Wallet->>Backend: emit('wallet:response', {<br/>  uuid, encryptedPayload,<br/>  nonce, timestamp })
-        activate Backend
-        Wallet->>Wallet: Clear pendingRequest
-        Wallet->>Wallet: Show "Success" alert
-        deactivate Wallet
+        WalletSDK->>WalletSDK: Create SignResponse:<br/>{ id, type, status: 'success',<br/>  result: { signature/signatures/txHash },<br/>  timestamp }
+        WalletSDK->>WalletSDK: EncryptionManager.encrypt(response)<br/>→ { encrypted, nonce }
+        WalletSDK->>WalletSDK: RequestHandler.clearPendingRequest()
+        WalletSDK->>WalletSDK: emit('request_approved', requestId)
+        WalletSDK->>Backend: socket.emit('wallet:response', {<br/>  uuid, encryptedPayload,<br/>  nonce, timestamp })
+        deactivate WalletSDK
 
         Note over Backend: Backend CANNOT read content<br/>Just forward to room
         Backend->>Backend: Broadcast to room (uuid)<br/>(NO verification, just forward)
-        Backend->>DAPP: Broadcast: emit('dapp:response', {<br/>  uuid, encryptedPayload,<br/>  nonce, timestamp })
+        Backend->>DAppSDK: socket.emit('dapp:response', {<br/>  uuid, encryptedPayload,<br/>  nonce, timestamp })
         deactivate Backend
 
-        activate DAPP
-        DAPP->>DAPP: Receive dapp:response event
-        DAPP->>DAPP: Decrypt with nacl.box.open:<br/>payload = nacl.box.open(encrypted,<br/>  nonce, walletPublicKey, dappSecretKey)
-        DAPP->>DAPP: Extract: { id, type,<br/>  status, result, error }
-        DAPP->>DAPP: Resolve/reject pending request
-        alt type === 'sign_message' || type === 'sign_transaction'
-            DAPP->>DAPP: Display result.signature
-        else type === 'sign_all_transactions'
-            DAPP->>DAPP: Display result.signatures[] (array)
-        else type === 'send_transaction'
-            DAPP->>DAPP: Display result.txHash
-        end
-        deactivate DAPP
+        activate DAppSDK
+        DAppSDK->>DAppSDK: Receive 'dapp:response' event
+        DAppSDK->>DAppSDK: EncryptionManager.decrypt(encryptedPayload, nonce)<br/>→ SignResponse
+        DAppSDK->>DAppSDK: RequestManager.resolveRequest(id, response)<br/>→ Resolve Promise
+        DAppSDK->>DAppSDK: emit('request_response', response)
+        DAppSDK-->>User: Promise resolves with SignResponse<br/>{ status: 'success', result: {...} }
+        deactivate DAppSDK
 
-        Note over User,Crypto: ✅ Operation Completed Successfully
+        Note over User,Signer: ✅ Operation Completed Successfully
     else User Rejects ❌
-        User->>Wallet: Click "Reject"
-        activate Wallet
-        Wallet->>Wallet: Call handleReject()
-        Wallet->>Wallet: Create response payload:<br/>{ id, type, status: 'error',<br/>  error: 'User rejected',<br/>  timestamp }
-        Wallet->>Wallet: Encrypt with nacl.box:<br/>encrypted = nacl.box(payload, nonce,<br/>  dappPublicKey, walletSecretKey)
-        Wallet->>Backend: emit('wallet:response', {<br/>  uuid, encryptedPayload,<br/>  nonce, timestamp })
-        activate Backend
-        Wallet->>Wallet: Clear pendingRequest
-        Wallet->>Wallet: Show "Rejected" alert
-        deactivate Wallet
+        User->>WalletSDK: client.rejectRequest(requestId, reason?)
+        activate WalletSDK
+        WalletSDK->>WalletSDK: RequestHandler.rejectRequest(requestId, reason)
+        WalletSDK->>WalletSDK: Create SignResponse:<br/>{ id, type, status: 'error',<br/>  error: 'User rejected',<br/>  timestamp }
+        WalletSDK->>WalletSDK: EncryptionManager.encrypt(response)
+        WalletSDK->>WalletSDK: RequestHandler.clearPendingRequest()
+        WalletSDK->>WalletSDK: emit('request_rejected', requestId)
+        WalletSDK->>Backend: socket.emit('wallet:response', {...})
+        deactivate WalletSDK
 
         Note over Backend: Backend CANNOT read content<br/>Just forward to room
         Backend->>Backend: Broadcast to room (uuid)
-        Backend->>DAPP: Broadcast: emit('dapp:response', {<br/>  uuid, encryptedPayload,<br/>  nonce, timestamp })
+        Backend->>DAppSDK: socket.emit('dapp:response', {...})
         deactivate Backend
 
-        activate DAPP
-        DAPP->>DAPP: Decrypt response
-        DAPP->>DAPP: Extract: { status: 'error', error }
-        DAPP->>DAPP: Reject pending request
-        DAPP->>DAPP: Display rejection message
-        deactivate DAPP
+        activate DAppSDK
+        DAppSDK->>DAppSDK: Decrypt response
+        DAppSDK->>DAppSDK: RequestManager.rejectRequest(id, Error)<br/>→ Reject Promise
+        DAppSDK->>DAppSDK: emit('request_response', response)
+        DAppSDK-->>User: Promise rejects with Error<br/>{ status: 'error', error: '...' }
+        deactivate DAppSDK
 
-        Note over User,Crypto: ❌ Request Rejected
+        Note over User,Signer: ❌ Request Rejected
     end
 ```
 
 ---
 
-## Step-by-Step Breakdown
+## SDK Usage Examples
 
-### Phase 1: DAPP Initiates Request
+### dApp Side (PhoenixDappClient)
 
-#### 1.1 Sign Message Request
+#### 1. Sign Message
 
-```js
-// User enters message and clicks button
-const message = "Hello World";
-const chainType = "evm"; // or "solana"
-const chainId = "1"; // Ethereum mainnet
+```typescript
+import { PhoenixDappClient } from '@phoenix-demo/dapp';
 
-// Generate request ID (SDK format: msg-{timestamp}-{random})
-const requestId = `msg-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+const client = new PhoenixDappClient({
+  serverUrl: 'http://localhost:3001',
+});
 
-// Encode payload to JSON string (for multi-chain support)
-const payloadObject = { message };
-const payloadString = JSON.stringify(payloadObject);
+// Connect first (returns QR code URI)
+const { uri, uuid } = await client.connect();
 
-// Create request payload
-const requestPayload = {
-  id: requestId,
-  type: 'sign_message',
-  chainType,           // "evm" | "solana"
-  chainId,             // Chain-specific ID
-  payload: payloadString, // JSON-encoded string
-  timestamp: Date.now()
+// Wait for wallet to connect
+client.on('session_connected', (session) => {
+  console.log('Connected to wallet:', session);
+});
+
+// Sign message
+try {
+  const response = await client.signMessage({
+    message: 'Hello World',
+    chainType: 'evm',
+    chainId: '1', // Ethereum mainnet
+  });
+
+  if (response.status === 'success') {
+    console.log('Signature:', response.result?.signature);
+    console.log('Message:', response.result?.message);
+  }
+} catch (error) {
+  console.error('Sign message failed:', error);
+}
+```
+
+#### 2. Sign Transaction
+
+```typescript
+const response = await client.signTransaction({
+  transaction: {
+    to: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0',
+    value: '100000000000000000', // Wei
+    data: '0x',
+    gasLimit: '21000',
+  },
+  chainType: 'evm',
+  chainId: '1',
+});
+
+if (response.status === 'success') {
+  console.log('Transaction signature:', response.result?.signature);
+}
+```
+
+#### 3. Sign All Transactions (Batch)
+
+```typescript
+const response = await client.signAllTransactions({
+  transactions: [
+    { /* Solana transaction 1 */ },
+    { /* Solana transaction 2 */ },
+  ],
+  chainType: 'solana',
+  chainId: 'mainnet-beta',
+});
+
+if (response.status === 'success') {
+  console.log('Signatures:', response.result?.signatures);
+  console.log('Count:', response.result?.signatures?.length);
+}
+```
+
+#### 4. Send Transaction (Direct Broadcast)
+
+```typescript
+const response = await client.sendTransaction({
+  transaction: {
+    to: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0',
+    value: '100000000000000000',
+    data: '0x',
+  },
+  chainType: 'evm',
+  chainId: '1',
+});
+
+if (response.status === 'success') {
+  console.log('Transaction hash:', response.result?.txHash);
+}
+```
+
+### Wallet Side (PhoenixWalletClient)
+
+#### 1. Connect to dApp
+
+```typescript
+import { PhoenixWalletClient } from '@phoenix-demo/wallet';
+
+const client = new PhoenixWalletClient();
+
+// Implement WalletSigner interface
+const signer: WalletSigner = {
+  address: '0x...',
+  chainType: 'evm',
+  async signMessage(payload: any): Promise<string> {
+    // Implement message signing logic
+    return '0x...';
+  },
+  async signTransaction(payload: any): Promise<string> {
+    // Implement transaction signing logic
+    return '0x...';
+  },
+  async sendTransaction(payload: any): Promise<string> {
+    // Implement transaction sending logic
+    return '0x...';
+  },
 };
 
-// Encrypt with wallet's public key
-const nacl = require('tweetnacl');
-const nonce = nacl.randomBytes(24);
-const payloadBytes = new TextEncoder().encode(JSON.stringify(requestPayload));
-const encrypted = nacl.box(
-  payloadBytes,
-  nonce,
-  walletPublicKey, // From connection phase
-  dappSecretKey     // From connection phase
-);
+// Connect by scanning QR code
+await client.connect(qrData, signer);
 
-// Send to backend
-socket.emit('dapp:request', {
-  uuid,
-  encryptedPayload: Buffer.from(encrypted).toString('base64'),
-  nonce: Buffer.from(nonce).toString('base64'),
-  timestamp: Date.now()
+client.on('session_connected', (session) => {
+  console.log('Connected to dApp:', session);
 });
 ```
 
-#### 1.2 Sign Transaction Request
+#### 2. Handle Sign Requests
 
-```js
-// User enters transaction details
-const transaction = {
-  to: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0",
-  value: "100000000000000000", // Wei
-  data: "0x", // Optional transaction data
-  gasLimit: "21000", // Optional
-  gasPrice: "20000000000" // Optional
-};
-const chainType = "evm"; // or "solana"
-const chainId = "1"; // Ethereum mainnet
+```typescript
+client.on('sign_request', (request: SignRequest) => {
+  console.log('Sign request received:', request.type);
+  
+  // Show approval UI to user
+  if (request.type === 'sign_message') {
+    const payload = JSON.parse(request.payload);
+    showApprovalModal({
+      message: payload.message,
+      chainType: request.chainType,
+      chainId: request.chainId,
+      onApprove: () => client.approveRequest(request.id),
+      onReject: () => client.rejectRequest(request.id, 'User rejected'),
+    });
+  } else if (request.type === 'sign_transaction') {
+    const transaction = JSON.parse(request.payload);
+    showTransactionModal({
+      from: signer.address,
+      to: transaction.to,
+      value: transaction.value,
+      chainType: request.chainType,
+      chainId: request.chainId,
+      onApprove: () => client.approveRequest(request.id),
+      onReject: () => client.rejectRequest(request.id),
+    });
+  }
+  // ... handle other request types
+});
 
-// Validate transaction
-if (!isValidAddress(transaction.to)) {
-  throw new Error('Invalid recipient address');
-}
-if (!isValidValue(transaction.value)) {
-  throw new Error('Invalid value');
-}
+client.on('request_approved', (requestId) => {
+  console.log('Request approved:', requestId);
+});
 
-// Generate request ID (SDK format: tx-{timestamp}-{random})
-const requestId = `tx-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-
-// Encode payload to JSON string (for multi-chain support)
-const payloadString = JSON.stringify(transaction);
-
-// Create request payload
-const requestPayload = {
-  id: requestId,
-  type: 'sign_transaction',
-  chainType,           // "evm" | "solana"
-  chainId,             // Chain-specific ID
-  payload: payloadString, // JSON-encoded string
-  timestamp: Date.now()
-};
-
-// Encrypt and send (same as signMessage)
-const nonce = nacl.randomBytes(24);
-const payloadBytes = new TextEncoder().encode(JSON.stringify(requestPayload));
-const encrypted = nacl.box(
-  payloadBytes,
-  nonce,
-  walletPublicKey,
-  dappSecretKey
-);
-
-socket.emit('dapp:request', {
-  uuid,
-  encryptedPayload: Buffer.from(encrypted).toString('base64'),
-  nonce: Buffer.from(nonce).toString('base64'),
-  timestamp: Date.now()
+client.on('request_rejected', (requestId) => {
+  console.log('Request rejected:', requestId);
 });
 ```
+
+---
+
+## Step-by-Step Breakdown (SDK Internal Flow)
+
+### Phase 1: dApp SDK Initiates Request
+
+The SDK handles all low-level details automatically:
+
+1. **Generate Request ID**: `RequestManager.generateRequestId(type)` creates unique ID:
+   - `sign_message` → `msg-{timestamp}-{random}`
+   - `sign_transaction` → `tx-{timestamp}-{random}`
+   - `sign_all_transactions` → `txs-{timestamp}-{random}`
+   - `send_transaction` → `send-{timestamp}-{random}`
+
+2. **Encode Payload**: `encodePayload(payload)` converts payload object to JSON string for multi-chain support
+
+3. **Create Request**: Builds `SignRequest` object:
+   ```typescript
+   {
+     id: string,
+     type: SignRequestType,
+     chainType: ChainType,
+     chainId: string,
+     payload: string, // JSON-encoded string
+     timestamp: number
+   }
+   ```
+
+4. **Encrypt**: `EncryptionManager.encrypt(request)` encrypts using nacl.box with wallet's public key
+
+5. **Track Request**: `RequestManager.addRequest(id, resolve, reject)` tracks pending request with 60s timeout
+
+6. **Send**: Emits `dapp:request` event to backend
 
 ### Phase 2: Backend Forwards Request (Dumb Relay)
 
-```js
+```javascript
 // Backend code - Just forwards encrypted messages
 socket.on('dapp:request', (data) => {
   const { uuid } = data;
-  
   // Backend CANNOT and SHOULD NOT decrypt or verify
   // Just broadcast to room participants
   socket.to(uuid).emit('wallet:request', data);
 });
 ```
 
-### Phase 3: Wallet Receives and Decrypts Request
+### Phase 3: Wallet SDK Receives and Processes Request
 
-```js
-socket.on('wallet:request', (data) => {
-  const { uuid, encryptedPayload, nonce } = data;
-  
-  // Decrypt the payload
-  const encrypted = Buffer.from(encryptedPayload, 'base64');
-  const nonceBytes = Buffer.from(nonce, 'base64');
-  
-  const decrypted = nacl.box.open(
-    encrypted,
-    nonceBytes,
-    dappPublicKey,    // From connection phase
-    walletSecretKey   // From connection phase
-  );
-  
-  if (!decrypted) {
-    throw new Error('Decryption failed');
-  }
-  
-  const payload = JSON.parse(new TextDecoder().decode(decrypted));
-  // payload: { id, type, chainType, chainId, payload: string, timestamp }
-  // payload.payload is a JSON-encoded string, need to decode it
-  
-  // Decode the payload string
-  const decodedPayload = JSON.parse(payload.payload);
-  // decodedPayload: { message } | { transaction } | { transactions: [...] }
-  
-  // Verify timestamp (prevent replay attacks)
-  const now = Date.now();
-  const maxAge = 5 * 60 * 1000; // 5 minutes
-  if (now - payload.timestamp > maxAge) {
-    sendErrorResponse(payload.id, payload.type, 'Request expired');
-    return;
-  }
-  
-  // Validate chain type matches signer
-  if (payload.chainType !== wallet.chainType) {
-    sendErrorResponse(payload.id, payload.type, 'Chain type mismatch');
-    return;
-  }
-  
-  // Validate request based on type
-  if (payload.type === 'sign_transaction' || payload.type === 'send_transaction') {
-    const transaction = decodedPayload;
-    if (!isValidAddress(transaction.to)) {
-      sendErrorResponse(payload.id, payload.type, 'Invalid recipient address');
-      return;
-    }
-    if (!isValidValue(transaction.value)) {
-      sendErrorResponse(payload.id, payload.type, 'Invalid value');
-      return;
-    }
-  } else if (payload.type === 'sign_all_transactions') {
-    if (!Array.isArray(decodedPayload.transactions)) {
-      sendErrorResponse(payload.id, payload.type, 'Invalid transactions array');
-      return;
-    }
-  }
-  
-  // Set pending request (store decoded payload)
-  setPendingRequest({
-    id: payload.id,
-    type: payload.type,
-    chainType: payload.chainType,
-    chainId: payload.chainId,
-    payload: decodedPayload // Store decoded payload
-  });
-  
-  // Show approval modal
-  if (payload.type === 'sign_message') {
-    showApprovalModal({
-      type: 'sign_message',
-      message: decodedPayload.message,
-      chainType: payload.chainType,
-      chainId: payload.chainId,
-      onApprove: () => handleApprove(payload.id),
-      onReject: () => handleReject(payload.id)
-    });
-  } else if (payload.type === 'sign_transaction') {
-    showTransactionModal({
-      type: 'sign_transaction',
-      from: wallet.address,
-      to: decodedPayload.to,
-      value: decodedPayload.value,
-      chainType: payload.chainType,
-      chainId: payload.chainId,
-      onApprove: () => handleApprove(payload.id),
-      onReject: () => handleReject(payload.id)
-    });
-  } else if (payload.type === 'sign_all_transactions') {
-    showBatchModal({
-      type: 'sign_all_transactions',
-      transactions: decodedPayload.transactions,
-      chainType: payload.chainType,
-      chainId: payload.chainId,
-      onApprove: () => handleApprove(payload.id),
-      onReject: () => handleReject(payload.id)
-    });
-  } else if (payload.type === 'send_transaction') {
-    showTransactionModal({
-      type: 'send_transaction',
-      from: wallet.address,
-      to: decodedPayload.to,
-      value: decodedPayload.value,
-      chainType: payload.chainType,
-      chainId: payload.chainId,
-      note: 'This transaction will be broadcast immediately',
-      onApprove: () => handleApprove(payload.id),
-      onReject: () => handleReject(payload.id)
-    });
-  }
-});
-```
+1. **Receive Event**: Listens for `wallet:request` event
 
-### Phase 4: User Approves (Wallet Generates Signature/Transaction)
+2. **Decrypt**: `EncryptionManager.decrypt(encryptedPayload, nonce)` decrypts to `SignRequest`
 
-```js
-async function handleApprove(requestId) {
-  const request = pendingRequest;
-  const walletAddress = wallet.address;
-  const timestamp = Date.now();
-  
-  // Handle based on request type and chain type
-  let result;
-  
-  if (request.type === 'sign_message') {
-    // Wallet signer handles EVM vs Solana signing differently
-    const payload = request.payload; // Already decoded
-    const signature = await walletSigner.signMessage(payload);
-    result = {
-      signature,
-      message: payload.message || payload
-    };
-    
-  } else if (request.type === 'sign_transaction') {
-    // Wallet signer handles EVM vs Solana transaction signing differently
-    const payload = request.payload; // Already decoded
-    const signature = await walletSigner.signTransaction(payload);
-    result = {
-      signature,
-      to: payload.to,
-      value: payload.value,
-      from: walletAddress
-    };
-    
-  } else if (request.type === 'sign_all_transactions') {
-    // Batch signing (e.g., Solana)
-    const transactions = request.payload.transactions; // Already decoded
-    const signatures = await walletSigner.signAllTransactions(transactions);
-    result = {
-      signatures, // Array of signatures
-      count: signatures.length
-    };
-    
-  } else if (request.type === 'send_transaction') {
-    // Direct send (e.g., EVM)
-    const payload = request.payload; // Already decoded
-    // Try sendTransaction first, fallback to signTransaction
-    const txHash = walletSigner.sendTransaction 
-      ? await walletSigner.sendTransaction(payload)
-      : await walletSigner.signTransaction(payload); // Fallback
-    result = {
-      txHash,
-      to: payload.to,
-      value: payload.value,
-      from: walletAddress
-    };
-  }
-  
-  // Create response payload
-  const responsePayload = {
-    id: requestId,
-    type: request.type,
-    status: 'success',
-    result,
-    timestamp
-  };
-  
-  // Encrypt response
-  const nonce = nacl.randomBytes(24);
-  const payloadBytes = new TextEncoder().encode(JSON.stringify(responsePayload));
-  const encrypted = nacl.box(
-    payloadBytes,
-    nonce,
-    dappPublicKey,
-    walletSecretKey
-  );
-  
-  // Send response
-  socket.emit('wallet:response', {
-    uuid,
-    encryptedPayload: Buffer.from(encrypted).toString('base64'),
-    nonce: Buffer.from(nonce).toString('base64'),
-    timestamp: Date.now()
-  });
-  
-  // Clear pending request and UI
-  clearPendingRequest();
-  showSuccessAlert(`${request.type} completed successfully`);
-}
-```
+3. **Validate**: `RequestHandler.validateRequest(request)`:
+   - Verifies timestamp (max 5 minutes old)
+   - Validates chainType matches signer's chainType
+   - Stores as `pendingRequest`
+
+4. **Emit Event**: Emits `sign_request` event for UI to show approval modal
+
+### Phase 4: User Approves (Wallet SDK Generates Response)
+
+1. **User Action**: Calls `client.approveRequest(requestId)`
+
+2. **Process Request**: `RequestHandler.approveRequest(requestId)`:
+   - Decodes payload: `decodePayload(request.payload)` → payload object
+   - Calls appropriate signer method based on request type:
+     - `sign_message` → `signer.signMessage(decodedPayload)`
+     - `sign_transaction` → `signer.signTransaction(decodedPayload)`
+     - `sign_all_transactions` → `signer.signAllTransactions(decodedPayload.transactions)`
+     - `send_transaction` → `signer.sendTransaction(decodedPayload)` or fallback
+
+3. **Create Response**: Builds `SignResponse`:
+   ```typescript
+   {
+     id: string,
+     type: SignRequestType,
+     status: 'success',
+     result: {
+       signature?: string,
+       signatures?: string[],
+       txHash?: string,
+       message?: string,
+       from?: string,
+     },
+     timestamp: number
+   }
+   ```
+
+4. **Encrypt & Send**: Encrypts response and emits `wallet:response` event
 
 ### Phase 5: User Rejects (Alternative Path)
 
-```js
-async function handleReject(requestId) {
-  const request = pendingRequest;
-  
-  // Create rejection response
-  const responsePayload = {
-    id: requestId,
-    type: request.type,
-    status: 'error',
-    error: reason || 'User rejected',
-    timestamp: Date.now()
-  };
-  
-  // Encrypt and send (same as approval)
-  const nonce = nacl.randomBytes(24);
-  const payloadBytes = new TextEncoder().encode(JSON.stringify(responsePayload));
-  const encrypted = nacl.box(
-    payloadBytes,
-    nonce,
-    dappPublicKey,
-    walletSecretKey
-  );
-  
-  socket.emit('wallet:response', {
-    uuid,
-    encryptedPayload: Buffer.from(encrypted).toString('base64'),
-    nonce: Buffer.from(nonce).toString('base64'),
-    timestamp: Date.now()
-  });
-  
-  clearPendingRequest();
-  showRejectedAlert('Request rejected');
-}
+1. **User Action**: Calls `client.rejectRequest(requestId, reason?)`
 
-// Helper function for error responses
-async function sendErrorResponse(requestId, type, reason) {
-  const responsePayload = {
-    id: requestId,
-    type,
-    status: 'error',
-    error: reason,
-    timestamp: Date.now()
-  };
-  
-  const nonce = nacl.randomBytes(24);
-  const payloadBytes = new TextEncoder().encode(JSON.stringify(responsePayload));
-  const encrypted = nacl.box(
-    payloadBytes,
-    nonce,
-    dappPublicKey,
-    walletSecretKey
-  );
-  
-  socket.emit('wallet:response', {
-    uuid,
-    encryptedPayload: Buffer.from(encrypted).toString('base64'),
-    nonce: Buffer.from(nonce).toString('base64'),
-    timestamp: Date.now()
-  });
-}
-```
+2. **Create Error Response**: `RequestHandler.rejectRequest(requestId, reason)` creates error response:
+   ```typescript
+   {
+     id: string,
+     type: SignRequestType,
+     status: 'error',
+     error: string,
+     timestamp: number
+   }
+   ```
+
+3. **Encrypt & Send**: Encrypts response and emits `wallet:response` event
 
 ### Phase 6: Backend Forwards Response (Dumb Relay)
 
-```js
-// Backend code - Just forwards encrypted messages
+```javascript
 socket.on('wallet:response', (data) => {
   const { uuid } = data;
-  
-  // Backend CANNOT and SHOULD NOT decrypt or verify
-  // Just broadcast to room participants
   socket.to(uuid).emit('dapp:response', data);
 });
 ```
 
-### Phase 7: DAPP Receives and Decrypts Response
+### Phase 7: dApp SDK Receives and Processes Response
 
-```js
-socket.on('dapp:response', (data) => {
-  const { uuid, encryptedPayload, nonce } = data;
-  
-  // Decrypt the payload
-  const encrypted = Buffer.from(encryptedPayload, 'base64');
-  const nonceBytes = Buffer.from(nonce, 'base64');
-  
-  const decrypted = nacl.box.open(
-    encrypted,
-    nonceBytes,
-    walletPublicKey,
-    dappSecretKey
-  );
-  
-  if (!decrypted) {
-    throw new Error('Decryption failed');
-  }
-  
-  const payload = JSON.parse(new TextDecoder().decode(decrypted));
-  // payload: { id, type, status, result?, error?, timestamp }
-  
-  // Handle response based on status
-  if (payload.status === 'success') {
-    if (payload.type === 'sign_message') {
-      // Display signature
-      setSignature({
-        signature: payload.result.signature,
-        message: payload.result.message
-      });
-      showSuccess('Message signed successfully!');
-    } else if (payload.type === 'sign_transaction') {
-      // Display signature
-      setTransactionResult({
-        signature: payload.result.signature,
-        to: payload.result.to,
-        value: payload.result.value,
-        from: payload.result.from
-      });
-      showSuccess('Transaction signed successfully!');
-    } else if (payload.type === 'sign_all_transactions') {
-      // Display batch signatures
-      setBatchResult({
-        signatures: payload.result.signatures,
-        count: payload.result.count
-      });
-      showSuccess(`Batch signed: ${payload.result.count} transactions`);
-    } else if (payload.type === 'send_transaction') {
-      // Display transaction hash
-      setTransactionResult({
-        txHash: payload.result.txHash,
-        to: payload.result.to,
-        value: payload.result.value,
-        from: payload.result.from
-      });
-      showSuccess('Transaction sent successfully!');
-    }
-    resolvePendingRequest(payload.id, payload);
-  } else if (payload.status === 'error') {
-    // Display error
-    showError(payload.error || 'Request failed');
-    rejectPendingRequest(payload.id, new Error(payload.error));
-  }
-});
-```
+1. **Receive Event**: Listens for `dapp:response` event
+
+2. **Decrypt**: `EncryptionManager.decrypt(encryptedPayload, nonce)` decrypts to `SignResponse`
+
+3. **Resolve/Reject**: `RequestManager.resolveRequest(id, response)` or `rejectRequest(id, error)`:
+   - Resolves or rejects the Promise returned from the original method call
+   - Clears pending request tracking
+
+4. **Emit Event**: Emits `request_response` event
 
 ---
 
 ## Security Benefits
 
 ### ✅ End-to-End Encryption
-- All messages encrypted with nacl.box
+- All messages encrypted with nacl.box (Curve25519 + XSalsa20-Poly1305)
 - Backend cannot read message/transaction content
-- Only DAPP and Wallet can decrypt
+- Only dApp and Wallet can decrypt
 
 ### ✅ Authenticated Encryption
 - nacl.box provides built-in MAC
@@ -662,13 +481,13 @@ socket.on('dapp:response', (data) => {
 ### ✅ Replay Protection
 - Timestamp verification (5 minute window)
 - Request ID prevents duplicate processing
+- SDK automatically validates timestamps
 
 ### ✅ Multi-Chain Support
 - Chain type and chain ID in every request
 - Generic payload encoding (JSON strings) supports any chain format
-- Crypto module handles chain-specific signing
+- WalletSigner interface handles chain-specific signing
 - Supports EVM and Solana (extensible to any blockchain)
-- Payload encoding/decoding utilities handle chain-specific formats
 
 ### ✅ Unified Event System
 - Standardized `dapp:request` / `wallet:response` events
@@ -680,151 +499,109 @@ socket.on('dapp:response', (data) => {
 - No verification or decryption
 - Compromised backend ≠ compromised security
 
+### ✅ SDK Abstraction
+- Automatic encryption/decryption
+- Request timeout handling (60s default)
+- Promise-based API for async operations
+- Event-driven architecture for UI updates
+
 ---
 
 ## Message Formats
 
 ### Request Format (Encrypted)
 
-```js
-// Encrypted payload contains (sign_message):
-{
-  id: string,             // "msg-1699234567890-abc123"
-  type: string,           // "sign_message"
-  chainType: string,      // "evm" | "solana"
-  chainId: string,        // "1" (Ethereum), "101" (Solana mainnet), etc.
-  payload: string,        // JSON-encoded string: "{\"message\":\"Hello\"}"
-  timestamp: number       // Unix timestamp
-}
+The encrypted payload contains a `SignRequest`:
 
-// Encrypted payload contains (sign_transaction):
-{
-  id: string,             // "tx-1699234567890-xyz789"
-  type: string,           // "sign_transaction"
-  chainType: string,      // "evm" | "solana"
-  chainId: string,        // "1" (Ethereum), "101" (Solana mainnet), etc.
-  payload: string,        // JSON-encoded string: "{\"to\":\"0x...\",\"value\":\"...\"}"
-  timestamp: number       // Unix timestamp
+```typescript
+interface SignRequest {
+  id: string;              // "msg-1699234567890-abc123" | "tx-..." | "txs-..." | "send-..."
+  type: SignRequestType;   // "sign_message" | "sign_transaction" | "sign_all_transactions" | "send_transaction"
+  chainType: ChainType;    // "evm" | "solana"
+  chainId: string;         // "1" (Ethereum), "mainnet-beta" (Solana), etc.
+  payload: string;         // JSON-encoded string: "{\"message\":\"Hello\"}" or "{\"to\":\"0x...\",\"value\":\"...\"}"
+  timestamp: number;       // Unix timestamp
 }
+```
 
-// Encrypted payload contains (sign_all_transactions):
-{
-  id: string,             // "all-1699234567890-abc123"
-  type: string,           // "sign_all_transactions"
-  chainType: string,      // "solana" (typically)
-  chainId: string,        // "mainnet-beta" (Solana)
-  payload: string,        // JSON-encoded string: "{\"transactions\":[{...},{...}]}"
-  timestamp: number       // Unix timestamp
-}
+Sent as `EncryptedMessage`:
 
-// Encrypted payload contains (send_transaction):
-{
-  id: string,             // "send-1699234567890-xyz789"
-  type: string,           // "send_transaction"
-  chainType: string,      // "evm" (typically)
-  chainId: string,        // "1" (Ethereum)
-  payload: string,        // JSON-encoded string: "{\"to\":\"0x...\",\"value\":\"...\"}"
-  timestamp: number       // Unix timestamp
-}
-
-// Sent as (EncryptedMessage):
-{
-  uuid: string,                  // Room UUID
-  encryptedPayload: string,      // base64 encrypted payload
-  nonce: string,                 // base64 nonce (24 bytes)
-  timestamp: number              // Unix timestamp (envelope timestamp)
+```typescript
+interface EncryptedMessage {
+  uuid: string;            // Room UUID
+  encryptedPayload: string; // base64 encrypted payload
+  nonce: string;           // base64 nonce (24 bytes)
+  timestamp: number;       // Unix timestamp (envelope timestamp)
 }
 ```
 
 ### Response Format (Encrypted)
 
-```js
-// Encrypted payload contains (success - sign_message):
-{
-  id: string,             // Request ID
-  type: string,           // "sign_message"
-  status: string,         // "success"
+The encrypted payload contains a `SignResponse`:
+
+**Success Response:**
+```typescript
+interface SignResponse {
+  id: string;              // Request ID
+  type: SignRequestType;   // Same as request type
+  status: 'success';
   result: {
-    signature: string,    // "0x..." or base58 (Solana)
-    message?: string      // Original message (optional)
-  },
-  timestamp: number
-}
-
-// Encrypted payload contains (success - sign_transaction):
-{
-  id: string,             // Request ID
-  type: string,           // "sign_transaction"
-  status: string,         // "success"
-  result: {
-    signature: string,    // "0x..." or base58 (Solana) - transaction signature
-    to?: string,          // Recipient address (optional)
-    value?: string,       // Amount in smallest unit (optional)
-    from?: string         // Sender address (optional)
-  },
-  timestamp: number
-}
-
-// Encrypted payload contains (success - sign_all_transactions):
-{
-  id: string,             // Request ID
-  type: string,           // "sign_all_transactions"
-  status: string,         // "success"
-  result: {
-    signatures: string[], // Array of signatures: ["sig1", "sig2", ...]
-    count?: number        // Number of signatures (optional)
-  },
-  timestamp: number
-}
-
-// Encrypted payload contains (success - send_transaction):
-{
-  id: string,             // Request ID
-  type: string,           // "send_transaction"
-  status: string,         // "success"
-  result: {
-    txHash: string,       // "0x..." or base58 (Solana) - transaction hash
-    to?: string,          // Recipient address (optional)
-    value?: string,       // Amount in smallest unit (optional)
-    from?: string         // Sender address (optional)
-  },
-  timestamp: number
-}
-
-// Encrypted payload contains (error):
-{
-  id: string,             // Request ID
-  type: string,           // "sign_message" | "sign_transaction" | "sign_all_transactions" | "send_transaction"
-  status: string,         // "error"
-  error: string,          // Error message
-  timestamp: number
-}
-
-// Sent as (EncryptedMessage):
-{
-  uuid: string,                  // Room UUID
-  encryptedPayload: string,      // base64 encrypted payload
-  nonce: string,                 // base64 nonce (24 bytes)
-  timestamp: number              // Unix timestamp (envelope timestamp)
+    signature?: string;    // For sign_message, sign_transaction
+    signatures?: string[]; // For sign_all_transactions
+    txHash?: string;       // For send_transaction
+    message?: string;      // Optional: original message
+    from?: string;         // Optional: sender address
+  };
+  timestamp: number;
 }
 ```
+
+**Error Response:**
+```typescript
+interface SignResponse {
+  id: string;              // Request ID
+  type: SignRequestType;   // Same as request type
+  status: 'error';
+  error: string;           // Error message
+  timestamp: number;
+}
+```
+
+Sent as `EncryptedMessage` (same format as request).
 
 ---
 
 ## Event Names
 
-### Standardized Events
+### Socket.io Events
 
 | Event Name | Direction | Description |
 |------------|-----------|-------------|
-| `dapp:request` | DAPP → Backend → Wallet | DAPP sends request to wallet |
+| `dapp:request` | dApp → Backend → Wallet | dApp sends request to wallet |
 | `wallet:request` | Backend → Wallet | Backend forwards request to wallet |
-| `wallet:response` | Wallet → Backend → DAPP | Wallet sends response to DAPP |
-| `dapp:response` | Backend → DAPP | Backend forwards response to DAPP |
+| `wallet:response` | Wallet → Backend → dApp | Wallet sends response to dApp |
+| `dapp:response` | Backend → dApp | Backend forwards response to dApp |
+
+### SDK Events (EventEmitter3)
+
+**PhoenixDappClient Events:**
+- `session_connected` - Wallet connected to session
+- `session_disconnected` - Wallet disconnected
+- `request_sent` - Request sent to wallet (requestId)
+- `request_response` - Response received from wallet (SignResponse)
+- `error` - Error occurred
+
+**PhoenixWalletClient Events:**
+- `session_connected` - Connected to dApp
+- `session_disconnected` - Disconnected from dApp
+- `sign_request` - Sign request received (SignRequest) - **Show approval UI here**
+- `request_approved` - Request approved (requestId)
+- `request_rejected` - Request rejected (requestId)
+- `error` - Error occurred
 
 ### Payload Type Field
 
-The `type` field in encrypted payloads distinguishes operation types:
+The `type` field in `SignRequest` distinguishes operation types:
 - `"sign_message"`: Sign arbitrary message
 - `"sign_transaction"`: Sign transaction (returns signature, does not broadcast)
 - `"sign_all_transactions"`: Batch sign multiple transactions (e.g., Solana)
@@ -832,7 +609,7 @@ The `type` field in encrypted payloads distinguishes operation types:
 
 ### Payload Status Field
 
-The `status` field in encrypted response payloads:
+The `status` field in `SignResponse`:
 - `"success"`: Operation completed successfully
 - `"error"`: Operation failed or rejected
 
@@ -840,7 +617,7 @@ The `status` field in encrypted response payloads:
 
 ## Backend Responsibilities (Minimal)
 
-```js
+```javascript
 // Backend ONLY does:
 1. Receive encrypted messages from room participants
 2. Forward dapp:request → wallet:request
@@ -862,34 +639,42 @@ The `status` field in encrypted response payloads:
 
 ## Error Handling
 
-### Decryption Failure
-- If decryption fails, message is ignored
-- No error sent to other party (prevents information leakage)
-- Request times out on sender side
+### SDK Error Handling
 
-### Timestamp Expired
-- Wallet rejects if timestamp > 5 minutes old
-- Sends error response with reason
-- DAPP can retry with new request
+**dApp Side:**
+- Request timeout (60s): Promise rejects with `Error('Request timeout')`
+- Decryption failure: Emits `error` event, request times out
+- Invalid response: Promise rejects with error from response
 
-### Invalid Request
-- Wallet validates request fields based on type
-- Sends error response with reason if invalid
-- DAPP displays error message
+**Wallet Side:**
+- Timestamp expired: `RequestHandler.validateRequest()` throws error, emits `error` event
+- Chain type mismatch: `RequestHandler.validateRequest()` throws error, emits `error` event
+- Signing failure: `RequestHandler.approveRequest()` creates error response automatically
 
-### User Rejection
-- Wallet sends explicit error response
-- DAPP displays rejection message
-- Request cleared from both sides
+### Error Response Format
 
-### Chain Type Mismatch
-- Wallet validates chainType is supported
-- Sends error response if unsupported chain
-- DAPP can handle gracefully
+```typescript
+{
+  id: string,
+  type: SignRequestType,
+  status: 'error',
+  error: string, // Error message
+  timestamp: number
+}
+```
+
+### Common Error Scenarios
+
+1. **Decryption Failure**: Message is ignored, no error sent (prevents information leakage), request times out on sender side
+2. **Timestamp Expired**: Wallet rejects with error response, dApp can retry
+3. **Invalid Request**: Wallet validates and sends error response, dApp displays error
+4. **User Rejection**: Wallet sends explicit error response, dApp displays rejection message
+5. **Chain Type Mismatch**: Wallet validates and sends error response, dApp can handle gracefully
+6. **Request Timeout**: dApp SDK automatically rejects Promise after 60s
 
 ---
 
-## Wallet Signer Interface
+## WalletSigner Interface
 
 The wallet must implement a `WalletSigner` interface that handles signing differently based on `chainType`:
 
@@ -923,49 +708,37 @@ interface WalletSigner {
 
 ---
 
-## Implementation Notes
+## SDK Implementation Details
 
-### Key Management
-```js
-// DAPP side
-const connection = {
-  uuid: string,
-  dappKeyPair: { publicKey: Uint8Array, secretKey: Uint8Array },
-  walletPublicKey: Uint8Array,
-  sharedSecret: Uint8Array,
-  connected: boolean
-};
+### Request ID Format
 
-// Wallet side
-const session = {
-  uuid: string,
-  walletKeyPair: { publicKey: Uint8Array, secretKey: Uint8Array },
-  dappPublicKey: Uint8Array,
-  sharedSecret: Uint8Array,
-  connected: boolean
-};
-```
+The SDK's `RequestManager.generateRequestId()` creates IDs with the following format:
+
+- `msg-{timestamp}-{random}`: For sign message requests (e.g., `msg-1699234567890-abc123`)
+- `tx-{timestamp}-{random}`: For sign transaction requests (e.g., `tx-1699234567890-xyz789`)
+- `txs-{timestamp}-{random}`: For batch sign all transactions (e.g., `txs-1699234567890-abc123`)
+- `send-{timestamp}-{random}`: For send transaction requests (e.g., `send-1699234567890-xyz789`)
 
 ### Payload Encoding/Decoding
 
 **Why JSON-encoded strings?**
 - Supports multiple blockchain formats (EVM, Solana, etc.) without tight coupling
 - Allows chain-specific transaction structures to be passed generically
-- SDK handles encoding/decoding automatically
+- SDK handles encoding/decoding automatically via `encodePayload()` / `decodePayload()`
 
-**Encoding (DAPP side):**
-```js
+**Encoding (dApp SDK):**
+```typescript
 // SDK automatically encodes payloads
 const payloadObject = { message: "Hello" };
-const payloadString = JSON.stringify(payloadObject);
+const payloadString = encodePayload(payloadObject);
 // payloadString: '{"message":"Hello"}'
 ```
 
-**Decoding (Wallet side):**
-```js
+**Decoding (Wallet SDK):**
+```typescript
 // SDK automatically decodes payloads before calling signer
 const payloadString = request.payload; // '{"message":"Hello"}'
-const decodedPayload = JSON.parse(payloadString);
+const decodedPayload = decodePayload(payloadString);
 // decodedPayload: { message: "Hello" }
 // signer.signMessage(decodedPayload) receives the object
 ```
@@ -975,54 +748,67 @@ const decodedPayload = JSON.parse(payloadString);
 - Solana: `{ instructions, recentBlockhash, ... }`
 - All encoded as JSON strings in the protocol layer
 
-### Request ID Format
-- `msg-{timestamp}-{random}`: For sign message requests (e.g., `msg-1699234567890-abc123`)
-- `tx-{timestamp}-{random}`: For sign transaction requests (e.g., `tx-1699234567890-xyz789`)
-- `all-{timestamp}-{random}`: For batch sign all transactions (e.g., `all-1699234567890-abc123`)
-- `send-{timestamp}-{random}`: For send transaction requests (e.g., `send-1699234567890-xyz789`)
+### Timeout Configuration
 
-### Chain Type Values
+- **Request Timeout**: 60 seconds (default) - Configurable via `RequestManager` constructor
+- **Connection Timeout**: 30 seconds - Socket.io connection timeout
+- **Max Request Age**: 5 minutes - Timestamp validation window
+
+### Session Persistence
+
+Both SDKs support session persistence:
+- **dApp SDK**: Automatically saves/restores session on page reload
+- **Wallet SDK**: Automatically saves/restores session on app restart
+- Encryption keys are stored securely and restored on reconnect
+
+---
+
+## Chain Type Values
+
 - `"evm"`: For Ethereum Virtual Machine chains
 - `"solana"`: For Solana blockchain
 
-### Chain ID Examples
-- EVM: `"1"` (Ethereum), `"137"` (Polygon), `"56"` (BSC)
-- Solana: `"101"` (mainnet), `"103"` (devnet), `"102"` (testnet)
+## Chain ID Examples
+
+- **EVM**: `"1"` (Ethereum), `"137"` (Polygon), `"56"` (BSC)
+- **Solana**: `"mainnet-beta"` (mainnet), `"devnet"` (devnet), `"testnet"` (testnet)
 
 ---
 
-## Comparison: Old vs New
+## Benefits of SDK Approach
 
-| Aspect | Old Flow (Separate) | New Flow (Unified) |
-|--------|---------------------|-------------------|
-| Event names | `web:signMessage`, `mobile:response` | `dapp:request`, `wallet:response` |
-| Operation types | Separate flows | Single unified flow with `type` field |
-| Request types | `"signMessage"`, `"signTransaction"` | `"sign_message"`, `"sign_transaction"`, `"sign_all_transactions"`, `"send_transaction"` |
-| Request ID field | `requestId` | `id` |
-| Request structure | Flat (message/transaction at root) | Nested (`payload` as JSON-encoded string) |
-| Payload format | Direct objects | JSON-encoded strings (generic, multi-chain) |
-| Chain support | Implicit (EVM only) | Explicit `chainType` and `chainId` |
-| Response status | `approved: boolean` | `status: "success" \| "error"` |
-| Response results | Single signature/txHash | Single or array (signature/signatures/txHash) |
-| Error handling | `result.reason` | `error` field |
-| Signing interface | Not specified | `WalletSigner` interface with optional methods |
-| Batch signing | Not supported | Supported via `sign_all_transactions` |
-| Direct send | Not supported | Supported via `send_transaction` |
-| Extensibility | Low | High (easy to add new chains/operations) |
+1. **Developer-Friendly**: Simple Promise-based API, no low-level encryption code
+2. **Type Safety**: Full TypeScript support with type definitions
+3. **Automatic Handling**: Encryption, decryption, timeouts, error handling all automatic
+4. **Event-Driven**: EventEmitter3 for reactive UI updates
+5. **Session Persistence**: Automatic session restore on reload/restart
+6. **Request Tracking**: Automatic request/response matching with timeout handling
+7. **Multi-Chain Ready**: Built-in support for multiple blockchains
+8. **Extensible**: Easy to add new chain types or operations
+9. **Maintainable**: Single codebase for all sign operations
+10. **Production-Ready**: Comprehensive error handling and validation
 
 ---
 
-## Benefits of Unified Flow
+## Comparison: Manual Implementation vs SDK
 
-1. **Single Implementation**: One flow handles all sign operations
-2. **Standardized Events**: Consistent `dapp:request` / `wallet:response` pattern
-3. **Multi-Chain Ready**: Built-in support for multiple blockchains via generic payload encoding
-4. **Type Safety**: `type` field makes operation explicit
-5. **Error Handling**: Unified error response format
-6. **Batch Operations**: Support for batch signing (e.g., Solana's signAllTransactions)
-7. **Direct Send**: Support for immediate broadcast (e.g., EVM's sendTransaction)
-8. **Generic Payloads**: JSON-encoded strings support any chain-specific format
-9. **Easy to Extend**: Add new operations or chains without changing flow structure
-10. **Maintainability**: Single codebase for all sign operations
-11. **Flexible Signer Interface**: Optional methods for advanced operations
+| Aspect | Manual Implementation | SDK Implementation |
+|--------|----------------------|-------------------|
+| Encryption | Manual nacl.box calls | Automatic via `EncryptionManager` |
+| Request Tracking | Manual Map/Set tracking | Automatic via `RequestManager` |
+| Timeout Handling | Manual setTimeout | Automatic 60s timeout |
+| Payload Encoding | Manual JSON.stringify/parse | Automatic via `encodePayload`/`decodePayload` |
+| Error Handling | Manual try/catch everywhere | Automatic error responses |
+| Session Persistence | Manual localStorage | Automatic via `SessionStorage` |
+| Event Handling | Manual socket.on() | EventEmitter3 events |
+| Type Safety | Manual type checking | Full TypeScript support |
+| Code Lines | ~800+ lines | ~300 lines (64% reduction) |
 
+---
+
+## Additional Resources
+
+- **Phoenix DApp SDK README**: `packages/phoenix-dapp/README.md`
+- **Phoenix Wallet SDK README**: `packages/phoenix-wallet/README.md`
+- **Connection Flow**: `flow/SEQUENCE_DIAGRAMS_CONNECTION.md`
+- **SDK Integration Guide**: `PHOENIX_SDK_INTEGRATION.md`
