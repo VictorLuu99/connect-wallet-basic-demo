@@ -58,13 +58,23 @@ export class LocalStorageAdapter implements StorageAdapter {
 }
 
 /**
+ * AsyncStorage interface (React Native)
+ * Compatible with @react-native-async-storage/async-storage
+ */
+export interface AsyncStorageInterface {
+  getItem(key: string): Promise<string | null>;
+  setItem(key: string, value: string): Promise<void>;
+  removeItem(key: string): Promise<void>;
+}
+
+/**
  * React Native AsyncStorage adapter
  * Requires @react-native-async-storage/async-storage to be installed
  */
 export class AsyncStorageAdapter implements StorageAdapter {
-  private asyncStorage: any;
+  private asyncStorage: AsyncStorageInterface;
 
-  constructor(asyncStorage: any) {
+  constructor(asyncStorage: AsyncStorageInterface) {
     if (!asyncStorage) {
       throw new Error('AsyncStorage instance is required');
     }

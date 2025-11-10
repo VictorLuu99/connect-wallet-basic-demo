@@ -113,7 +113,7 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const { uuid, publicKey } = data;
+    const { uuid } = data;
     console.log("connected_uuid", data);
     
 
@@ -124,7 +124,7 @@ io.on('connection', (socket) => {
 
     // Broadcast to room (dApp will receive this)
     // Backend just forwards - public key is not encrypted (it's meant to be public)
-    io.to(uuid).emit('connected_uuid', { uuid, publicKey });
+    io.to(uuid).emit('connected_uuid', data);
 
     console.log(`📱 Wallet connected to room: ${uuid}`);
   });

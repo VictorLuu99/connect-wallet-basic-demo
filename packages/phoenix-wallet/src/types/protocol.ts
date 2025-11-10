@@ -13,6 +13,32 @@ export interface PhoenixURI {
   uuid: string;
   serverUrl: string;
   publicKey: string;
+  appUrl?: string; // Optional dApp app URL
+}
+
+/**
+ * Session token for cryptographic proof of wallet identity
+ * Signed by wallet's blockchain private key (not encryption key)
+ */
+export interface SessionToken {
+  sessionId: string;        // UUID of connection
+  walletAddress: string;    // Blockchain address
+  chainType: ChainType;     // 'evm' | 'solana' | ...
+  appUrl?: string;          // dApp's app URL (optional)
+  serverUrl: string;        // Backend relay URL
+  dappPublicKey: string;    // dApp's encryption public key (base64)
+  timestamp: number;        // Creation time (replay protection)
+  signature: string;        // Digital signature of all above fields
+}
+
+/**
+ * Connection response data (encrypted in connected_uuid event)
+ */
+export interface ConnectionResponseData {
+  sessionToken: SessionToken;
+  address: string;
+  chainType: ChainType;
+  chainId?: string;
 }
 
 /**
@@ -44,6 +70,7 @@ export interface SignRequest {
   chainType: ChainType;
   chainId: string;
   payload: string; // JSON-encoded string for multi-chain support
+  sessionToken: SessionToken; // Cryptographic proof of wallet identity
   timestamp: number;
 }
 
@@ -61,6 +88,7 @@ export interface SignResponseResult {
   txHash?: string;
   txHashes?: string[]; // For batch transactions
   message?: string;
+  from?: string; // Wallet address that signed
 }
 
 /**
@@ -84,4 +112,5 @@ export interface Session {
   address?: string;
   chainType?: ChainType;
   chainId?: string;
+  sessionToken?: SessionToken; // Authenticated session token from wallet
 }

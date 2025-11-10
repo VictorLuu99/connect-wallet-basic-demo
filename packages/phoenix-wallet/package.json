@@ -1,6 +1,6 @@
 {
   "name": "@vincenttaylorlab3/phoenix-wallet",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Phoenix WalletConnect protocol SDK for wallet developers",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -9,6 +9,7 @@ import {
   SignResponse,
   PhoenixURI,
   EncryptedMessage,
+  ConnectionResponseData,
 } from './types';
 import { EncryptionManager } from './utils/encryption';
 import { QRParser } from './core/QRParser';
@@ -16,6 +17,7 @@ import { RequestHandler } from './core/RequestHandler';
 import { SOCKET_EVENTS, TIMEOUTS } from './utils/constants';
 import { SessionStorage } from './utils/sessionStorage';
 import { getDefaultStorageAdapter } from './utils/storage';
+import { createSessionToken, validateSessionToken } from './utils/sessionToken.js';
 
 /**
  * Phoenix Wallet Client
@@ -26,7 +28,7 @@ export class PhoenixWalletClient extends EventEmitter<PhoenixWalletEvents> {
   private encryption: EncryptionManager;
   private requestHandler: RequestHandler;
   private session?: Session;
-  private config: Required<PhoenixWalletConfig> & { storage?: any; enablePersistence?: boolean };
+  private config: Required<PhoenixWalletConfig> & { storage: import('./utils/storage').StorageAdapter; enablePersistence: boolean };
   private sessionStorage: SessionStorage;
   private storedServerUrl?: string;
   private isReconnecting: boolean = false;
@@ -96,20 +98,33 @@ export class PhoenixWalletClient extends EventEmitter<PhoenixWalletEvents> {
     console.log("qrData", qrData);
     const connectionData: PhoenixURI = QRParser.parseURI(qrData);
     console.log("connectionData", connectionData);
-    
 
-    // Set peer public key
+    // Set peer public key and compute shared secret
     this.encryption.setPeerPublicKey(connectionData.publicKey);
 
     // Set signer
     this.requestHandler.setSigner(signer);
 
-    // Initialize session
+    // Create sessionToken IMMEDIATELY (signed by wallet's blockchain private key)
+    console.log('[Phoenix Wallet] Creating sessionToken...');
+    const sessionToken = await createSessionToken(
+      connectionData.uuid,
+      signer.address,
+      signer.chainType,
+      connectionData.serverUrl,
+      connectionData.publicKey, // dApp's public key
+      signer,
+      connectionData.appUrl
+    );
+    console.log('[Phoenix Wallet] SessionToken created and signed');
+
+    // Initialize session with sessionToken
     this.session = {
       uuid: connectionData.uuid,
       connected: false,
       address: signer.address,
       chainType: signer.chainType,
+      sessionToken, // Store sessionToken in session
     };
 
     // Save session to storage
@@ -119,8 +134,8 @@ export class PhoenixWalletClient extends EventEmitter<PhoenixWalletEvents> {
 
     this.storedServerUrl = connectionData.serverUrl;
 
-    // Connect to socket server
-    await this.connectSocket(connectionData.serverUrl, connectionData.uuid);
+    // Connect to socket server and send encrypted sessionToken
+    await this.connectSocket(connectionData.serverUrl, connectionData.uuid, sessionToken, signer);
   }
 
   /**
@@ -201,7 +216,7 @@ export class PhoenixWalletClient extends EventEmitter<PhoenixWalletEvents> {
   /**
    * Connect to socket server
    */
-  private async connectSocket(serverUrl: string, uuid: string): Promise<void> {
+  private async connectSocket(serverUrl: string, uuid: string, sessionToken?: import('./types').SessionToken, signer?: WalletSigner): Promise<void> {
     return new Promise((resolve, reject) => {
       // Clean up old socket if exists
       if (this.socket) {
@@ -230,13 +245,37 @@ export class PhoenixWalletClient extends EventEmitter<PhoenixWalletEvents> {
         // Join room
         this.socket!.emit(SOCKET_EVENTS.JOIN, { uuid });
 
-        // Emit connection event with wallet's public key
-        // dApp needs this to encrypt messages to wallet
+        // Prepare connection event data
         const walletPublicKey = this.encryption.getPublicKey();
-        this.socket!.emit(SOCKET_EVENTS.CONNECTED_UUID, { 
+        const connectionEventData: { uuid: string; publicKey: string; nonce?: string; data?: string } = {
           uuid,
-          publicKey: walletPublicKey 
-        });
+          publicKey: walletPublicKey
+        };
+
+        // If sessionToken provided, encrypt and include in connection event
+        if (sessionToken && signer) {
+          console.log('[Phoenix Wallet] Encrypting sessionToken for dApp...');
+
+          // Prepare connection response data
+          const connectionResponseData: ConnectionResponseData = {
+            sessionToken,
+            address: signer.address,
+            chainType: signer.chainType,
+            chainId: this.session?.chainId
+          };
+
+          // Encrypt using shared secret
+          const encrypted = this.encryption.encrypt(connectionResponseData as unknown as Record<string, unknown>);
+
+          // Add encrypted data to connection event
+          connectionEventData.nonce = encrypted.nonce;
+          connectionEventData.data = encrypted.encrypted;
+
+          console.log('[Phoenix Wallet] SessionToken encrypted and ready to send');
+        }
+
+        // Emit connection event with wallet's public key + encrypted sessionToken
+        this.socket!.emit(SOCKET_EVENTS.CONNECTED_UUID, connectionEventData);
 
         // Update session
         if (this.session) {
@@ -298,6 +337,38 @@ export class PhoenixWalletClient extends EventEmitter<PhoenixWalletEvents> {
         data.nonce
       );
 
+      // VALIDATE sessionToken before processing (security critical!)
+      if (!request.sessionToken) {
+        throw new Error('Missing session token - request rejected');
+      }
+
+      if (!this.session || !this.storedServerUrl) {
+        throw new Error('No active session - request rejected');
+      }
+
+      // Validate sessionToken matches current session
+      const peerPublicKey = this.encryption.getPeerPublicKey();
+      if (!peerPublicKey) {
+        throw new Error('No peer public key - session invalid');
+      }
+
+      const isValid = validateSessionToken(
+        request.sessionToken,
+        {
+          uuid: this.session.uuid,
+          address: this.session.address!,
+          chainType: this.session.chainType!
+        },
+        this.storedServerUrl,
+        peerPublicKey
+      );
+
+      if (!isValid) {
+        throw new Error('Invalid session token - request rejected');
+      }
+
+      console.log('[Phoenix Wallet] SessionToken validated ✓');
+
       // Validate and store request
       this.requestHandler.validateRequest(request);
 
@@ -318,7 +389,7 @@ export class PhoenixWalletClient extends EventEmitter<PhoenixWalletEvents> {
     }
 
     // Encrypt response
-    const { encrypted, nonce } = this.encryption.encrypt(response);
+    const { encrypted, nonce } = this.encryption.encrypt(response as unknown as Record<string, unknown>);
 
     const message: EncryptedMessage = {
       uuid: this.session.uuid,

@@ -1,4 +1,5 @@
 import { ChainType } from './chains';
+import { MessagePayload, TransactionPayload } from '../utils/payload';
 
 /**
  * Wallet signer interface
@@ -19,30 +20,33 @@ export interface WalletSigner {
   /**
    * Sign a message
    * @param params - Message signing parameters (decoded from JSON string)
+   * Can be string, Uint8Array, or chain-specific message payload object
    * @returns Promise<string> - Signature string
    */
-  signMessage(params: any): Promise<string>;
+  signMessage(params: MessagePayload): Promise<string>;
 
   /**
    * Sign a transaction (returns signature, does not broadcast)
    * @param params - Transaction parameters (decoded from JSON string)
+   * Can be chain-specific transaction payload object (EVM, Solana, etc.)
    * @returns Promise<string> - Transaction signature
    */
-  signTransaction(params: any): Promise<string>;
+  signTransaction(params: TransactionPayload): Promise<string>;
 
   /**
    * Sign multiple transactions (for batch signing, e.g., Solana)
    * @param transactions - Array of transaction parameters (decoded from JSON string)
    * @returns Promise<string[]> - Array of transaction signatures
    */
-  signAllTransactions?(transactions: any[]): Promise<string[]>;
+  signAllTransactions?(transactions: TransactionPayload[]): Promise<string[]>;
 
   /**
    * Sign and send a transaction (broadcasts immediately, e.g., EVM)
    * @param params - Transaction parameters (decoded from JSON string)
+   * Can be chain-specific transaction payload object
    * @returns Promise<string> - Transaction hash
    */
-  sendTransaction?(params: any): Promise<string>;
+  sendTransaction?(params: TransactionPayload): Promise<string>;
 }
 
 /**

@@ -4,7 +4,7 @@ import {
   WalletSigner,
 } from '../types';
 import { isValidTimestamp } from '../utils/validation';
-import { decodePayload } from '../utils/payload';
+import { decodePayload, MessagePayload, TransactionPayload } from '../utils/payload';
 
 /**
  * Request handler for processing sign requests
@@ -69,19 +69,25 @@ export class RequestHandler {
     const request = this.pendingRequest;
 
     try {
-      let result: any;
+      let result: import('../types').SignResponseResult;
 
       // Decode payload from JSON string
-      const decodedPayload = decodePayload(request.payload);
+      const decodedPayload = decodePayload<MessagePayload | TransactionPayload>(request.payload);
+      
+      if (!decodedPayload) {
+        throw new Error('Invalid payload: decoded payload is null');
+      }
 
       if (request.type === 'sign_message') {
-        const signature = await this.signer.signMessage(decodedPayload);
+        const signature = await this.signer.signMessage(decodedPayload as MessagePayload);
         result = { 
           signature, 
-          message: decodedPayload.message || decodedPayload 
+          message: typeof decodedPayload === 'object' && decodedPayload !== null && 'message' in decodedPayload 
+            ? String((decodedPayload as { message?: unknown }).message || decodedPayload)
+            : String(decodedPayload)
         };
       } else if (request.type === 'sign_transaction') {
-        const signature = await this.signer.signTransaction(decodedPayload);
+        const signature = await this.signer.signTransaction(decodedPayload as TransactionPayload);
         result = {
           signature,
           from: this.signer.address,
@@ -91,11 +97,13 @@ export class RequestHandler {
         if (!this.signer.signAllTransactions) {
           throw new Error('signAllTransactions not supported by signer');
         }
-        const transactions = decodedPayload.transactions || decodedPayload;
+        const transactions = (typeof decodedPayload === 'object' && decodedPayload !== null && 'transactions' in decodedPayload)
+          ? (decodedPayload as { transactions?: unknown }).transactions
+          : decodedPayload;
         if (!Array.isArray(transactions)) {
           throw new Error('sign_all_transactions requires array of transactions');
         }
-        const signatures = await this.signer.signAllTransactions(transactions);
+        const signatures = await this.signer.signAllTransactions(transactions as TransactionPayload[]);
         result = {
           signatures,
           from: this.signer.address,
@@ -103,14 +111,14 @@ export class RequestHandler {
       } else if (request.type === 'send_transaction') {
         // Handle direct send (e.g., EVM)
         if (this.signer.sendTransaction) {
-          const txHash = await this.signer.sendTransaction(decodedPayload);
+          const txHash = await this.signer.sendTransaction(decodedPayload as TransactionPayload);
           result = {
             txHash,
             from: this.signer.address,
           };
         } else {
           // Fallback: sign and return signature (wallet can broadcast separately)
-          const signature = await this.signer.signTransaction(decodedPayload);
+          const signature = await this.signer.signTransaction(decodedPayload as TransactionPayload);
           result = {
             signature,
             from: this.signer.address,

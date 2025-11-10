@@ -1,6 +1,6 @@
 {
   "name": "@vincenttaylorlab3/phoenix-dapp",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Phoenix WalletConnect protocol SDK for dApp developers",
   "type": "module",
   "main": "dist/index.js",

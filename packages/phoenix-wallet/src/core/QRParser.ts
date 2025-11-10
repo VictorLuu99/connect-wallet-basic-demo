@@ -37,10 +37,9 @@ export class QRParser {
     // Legacy format: phoenix:{JSON} - for backward compatibility
     const jsonStr = uri.substring('phoenix:'.length);
 
-    let data: any;
+    let data: Partial<PhoenixURI>;
     try {
-      data = JSON.parse(jsonStr);
-
+      data = JSON.parse(jsonStr) as Partial<PhoenixURI>;
     } catch (error) {
       throw new Error('Invalid Phoenix URI - malformed JSON');
     }

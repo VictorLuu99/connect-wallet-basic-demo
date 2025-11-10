@@ -14,6 +14,7 @@ import {
   PhoenixURI,
   PROTOCOL_VERSION,
   EncryptedMessage,
+  ConnectionResponseData,
 } from './types';
 import { EncryptionManager } from './utils/encryption';
 import { URIEncoder } from './core/URIEncoder';
@@ -33,7 +34,7 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
   private encryption: EncryptionManager;
   private requestManager: RequestManager;
   private session?: Session;
-  private config: Required<PhoenixDappConfig> & { storage?: any; enablePersistence?: boolean };
+  private config: Required<PhoenixDappConfig> & { storage: import('./utils/storage').StorageAdapter; enablePersistence: boolean };
   private sessionStorage: SessionStorage;
   private initializationPromise: Promise<void>;
   private initialized: boolean = false;
@@ -207,10 +208,15 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
   async signMessage(params: SignMessageParams): Promise<SignResponse> {
     this.ensureConnected();
 
+    // Check sessionToken exists
+    if (!this.session?.sessionToken) {
+      throw new Error('No session token available - reconnect required');
+    }
+
     const requestId = this.requestManager.generateRequestId('sign_message');
 
     // Encode payload to JSON string for multi-chain support
-    const payload = typeof params.message === 'string' 
+    const payload = typeof params.message === 'string'
       ? { message: params.message }
       : params.message;
     const encodedPayload = encodePayload(payload);
@@ -221,6 +227,7 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
       chainType: params.chainType,
       chainId: params.chainId,
       payload: encodedPayload,
+      sessionToken: this.session.sessionToken, // Include sessionToken
       timestamp: Date.now(),
     };
 
@@ -233,6 +240,11 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
   async signTransaction(params: SignTransactionParams): Promise<SignResponse> {
     this.ensureConnected();
 
+    // Check sessionToken exists
+    if (!this.session?.sessionToken) {
+      throw new Error('No session token available - reconnect required');
+    }
+
     const requestId = this.requestManager.generateRequestId('sign_transaction');
 
     // Encode payload to JSON string for multi-chain support
@@ -244,6 +256,7 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
       chainType: params.chainType,
       chainId: params.chainId,
       payload: encodedPayload,
+      sessionToken: this.session.sessionToken, // Include sessionToken
       timestamp: Date.now(),
     };
 
@@ -256,6 +269,11 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
   async signAllTransactions(params: SignAllTransactionsParams): Promise<SignResponse> {
     this.ensureConnected();
 
+    // Check sessionToken exists
+    if (!this.session?.sessionToken) {
+      throw new Error('No session token available - reconnect required');
+    }
+
     const requestId = this.requestManager.generateRequestId('sign_all_transactions');
 
     // Encode payload to JSON string for multi-chain support
@@ -267,6 +285,7 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
       chainType: params.chainType,
       chainId: params.chainId,
       payload: encodedPayload,
+      sessionToken: this.session.sessionToken, // Include sessionToken
       timestamp: Date.now(),
     };
 
@@ -279,6 +298,11 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
   async sendTransaction(params: SendTransactionParams): Promise<SignResponse> {
     this.ensureConnected();
 
+    // Check sessionToken exists
+    if (!this.session?.sessionToken) {
+      throw new Error('No session token available - reconnect required');
+    }
+
     const requestId = this.requestManager.generateRequestId('send_transaction');
 
     // Encode payload to JSON string for multi-chain support
@@ -290,6 +314,7 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
       chainType: params.chainType,
       chainId: params.chainId,
       payload: encodedPayload,
+      sessionToken: this.session.sessionToken, // Include sessionToken
       timestamp: Date.now(),
     };
 
@@ -384,14 +409,48 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
         reject(error);
       });
 
-      // Listen for wallet connection
-      this.socket.on(SOCKET_EVENTS.CONNECTED_UUID, (data: { uuid: string; publicKey: string }) => {
+      // Listen for wallet connection (with optional encrypted sessionToken)
+      this.socket.on(SOCKET_EVENTS.CONNECTED_UUID, async (data: {
+        uuid: string;
+        publicKey: string;
+        nonce?: string;
+        data?: string;
+      }) => {
         console.log('[Phoenix DAPP] Received connected_uuid:', data);
         if (data.uuid === uuid) {
           // Set wallet's public key for encryption
           if (data.publicKey) {
             this.encryption.setPeerPublicKey(data.publicKey);
             console.log('[Phoenix DAPP] Wallet public key set');
+
+            // If encrypted sessionToken data present, decrypt and STORE (no verification)
+            if (data.nonce && data.data) {
+              try {
+                console.log('[Phoenix DAPP] Decrypting sessionToken from wallet...');
+
+                // Decrypt using shared secret
+                const decrypted = this.encryption.decrypt<ConnectionResponseData>(
+                  data.data,
+                  data.nonce
+                );
+
+                const responseData: ConnectionResponseData = decrypted;
+
+                // Store sessionToken in session (no verification needed - wallet signed it)
+                if (this.session) {
+                  this.session.sessionToken = responseData.sessionToken;
+                  this.session.address = responseData.address;
+                  this.session.chainType = responseData.chainType;
+                  this.session.chainId = responseData.chainId;
+                }
+
+                console.log('[Phoenix DAPP] SessionToken stored ✓');
+              } catch (error) {
+                console.error('[Phoenix DAPP] Failed to decrypt sessionToken:', error);
+                // Continue anyway - legacy wallets may not send sessionToken
+              }
+            }
+
             this.handleWalletConnected(uuid);
           }
         }
@@ -450,8 +509,8 @@ export class PhoenixDappClient extends EventEmitter<PhoenixDappEvents> {
       // Add to pending requests
       this.requestManager.addRequest(request.id, request.type, resolve, reject);
 
-      // Encrypt request
-      const { encrypted, nonce } = this.encryption.encrypt(request);
+      // Encrypt request (SignRequest is compatible with Record<string, unknown>)
+      const { encrypted, nonce } = this.encryption.encrypt(request as unknown as Record<string, unknown>);
 
       const message: EncryptedMessage = {
         uuid: this.session!.uuid,

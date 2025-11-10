@@ -19,11 +19,13 @@ export interface PhoenixDappConfig {
   enablePersistence?: boolean; // Default: true
 }
 
+import { MessagePayload, TransactionPayload } from '../utils/payload';
+
 /**
  * Sign message parameters
  */
 export interface SignMessageParams {
-  message: string | any; // Can be string or chain-specific message object
+  message: MessagePayload; // Can be string, Uint8Array, or chain-specific message object
   chainType: import('./chains').ChainType;
   chainId: string;
 }
@@ -32,7 +34,7 @@ export interface SignMessageParams {
  * Sign transaction parameters
  */
 export interface SignTransactionParams {
-  transaction: any; // Chain-specific transaction object (EVM, Solana, etc.)
+  transaction: TransactionPayload; // Chain-specific transaction object (EVM, Solana, etc.)
   chainType: import('./chains').ChainType;
   chainId: string;
 }
@@ -41,7 +43,7 @@ export interface SignTransactionParams {
  * Sign all transactions parameters (for batch signing, e.g., Solana)
  */
 export interface SignAllTransactionsParams {
-  transactions: any[]; // Array of chain-specific transaction objects
+  transactions: TransactionPayload[]; // Array of chain-specific transaction objects
   chainType: import('./chains').ChainType;
   chainId: string;
 }
@@ -50,7 +52,7 @@ export interface SignAllTransactionsParams {
  * Send transaction parameters (for direct send, e.g., EVM)
  */
 export interface SendTransactionParams {
-  transaction: any; // Chain-specific transaction object
+  transaction: TransactionPayload; // Chain-specific transaction object
   chainType: import('./chains').ChainType;
   chainId: string;
 }

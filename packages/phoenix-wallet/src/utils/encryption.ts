@@ -92,8 +92,9 @@ export class EncryptionManager {
 
   /**
    * Encrypt message
+   * @param message - JSON-serializable message object
    */
-  encrypt(message: any): { encrypted: string; nonce: string } {
+  encrypt(message: Record<string, unknown>): { encrypted: string; nonce: string } {
     if (!this.peerPublicKey) {
       throw new Error('Peer public key not set');
     }
@@ -117,8 +118,11 @@ export class EncryptionManager {
 
   /**
    * Decrypt message
+   * @param encryptedBase64 - Base64-encoded encrypted message
+   * @param nonceBase64 - Base64-encoded nonce
+   * @returns Decrypted message object
    */
-  decrypt(encryptedBase64: string, nonceBase64: string): any {
+  decrypt<T = Record<string, unknown>>(encryptedBase64: string, nonceBase64: string): T {
     if (!this.peerPublicKey) {
       throw new Error('Peer public key not set');
     }
@@ -138,6 +142,6 @@ export class EncryptionManager {
     }
 
     const messageStr = new TextDecoder().decode(decrypted);
-    return JSON.parse(messageStr);
+    return JSON.parse(messageStr) as T;
   }
 }

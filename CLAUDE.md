@@ -171,28 +171,115 @@ npx expo start --clear
 - Authenticated encryption (AEAD via nacl.box)
 - Replay protection (timestamp verification)
 - Zero-trust backend (relay cannot decrypt)
+- **SessionToken Authentication** (v0.1.6+): Cryptographic proof of wallet identity
+
+### SessionToken Security Layer
+
+**Added in**: Wallet SDK v0.1.6, dApp SDK v0.1.8
+
+**Purpose**: Prevents unauthorized sign requests by requiring cryptographic proof that requests originate from the authenticated wallet.
+
+**Implementation**:
+- **Location**: `packages/phoenix-wallet/src/utils/sessionToken.ts`
+- **Creation**: Wallet creates sessionToken immediately after scanning QR code, signed with blockchain private key
+- **Transmission**: Encrypted with E2E encryption and sent in `connected_uuid` event
+- **Storage**: dApp decrypts and stores sessionToken (no verification needed)
+- **Validation**: Wallet validates sessionToken on every incoming sign request before processing
+
+**SessionToken Structure**:
+```typescript
+interface SessionToken {
+  sessionId: string;        // UUID from QR code
+  walletAddress: string;    // Blockchain address
+  chainType: ChainType;     // 'evm', 'solana', etc.
+  appUrl?: string;          // dApp's app URL (optional)
+  serverUrl: string;        // Backend relay URL
+  dappPublicKey: string;    // dApp's encryption public key (base64)
+  timestamp: number;        // Creation timestamp (replay protection)
+  signature: string;        // Digital signature of all above fields
+}
+```
+
+**Signature Message Format**:
+```
+"${sessionId}:${walletAddress}:${chainType}:${appUrl}:${serverUrl}:${dappPublicKey}:${timestamp}"
+```
+
+**Security Benefits**:
+- **Request Authentication**: Wallet verifies all requests contain valid sessionToken before processing
+- **Replay Protection**: 5-minute timestamp window prevents token reuse
+- **Session Binding**: Token ties requests to specific session (UUID), wallet, chain, server, and dApp
+- **Zero Trust**: Backend cannot forge sessionToken (requires blockchain private key)
+- **Man-in-the-Middle Protection**: Token includes dApp's public key in signature
+
+**Validation Rules** (Wallet-side only):
+1. SessionToken must exist in request
+2. Session ID must match current session UUID
+3. Wallet address must match (case-insensitive for EVM)
+4. Chain type must match
+5. Server URL must match stored value
+6. dApp public key must match peer's encryption key
+7. Timestamp must be within 5-minute window
 
 ## Important Implementation Details
 
 ### Socket.io Event Flow
 
-**Connection Flow**:
+**Connection Flow** (with SessionToken - v0.1.6+):
 ```
-Web → join-room {uuid, webPublicKey}
-Mobile → join-room {uuid}
-Mobile → connected_uuid {uuid, mobilePublicKey}
-Backend → broadcasts connected_uuid to room
-Web receives mobile's public key
+1. Web dApp:
+   - Generates ephemeral keypair
+   - Creates QR code: phoenix://connect?uuid={uuid}&serverUrl={url}&publicKey={base64}&appUrl={url}
+   - Displays QR code
+
+2. Mobile Wallet:
+   - Scans QR code, extracts dApp's public key, UUID, server URL
+   - Generates ephemeral keypair
+   - Sets dApp's public key as peer
+   - Creates sessionToken (signed with blockchain private key)
+   - Connects to server: join-room {uuid}
+   - Encrypts connectionResponse = {sessionToken, address, chainType, chainId}
+   - Emits: connected_uuid {uuid, walletPublicKey, nonce, data}
+
+3. Backend:
+   - Broadcasts connected_uuid to room (including web dApp)
+
+4. Web dApp:
+   - Receives connected_uuid with wallet's public key + encrypted data
+   - Sets wallet's public key as peer
+   - Decrypts connectionResponse
+   - Stores sessionToken (no verification)
+   - Session established ✓
 ```
 
-**Sign Request Flow**:
+**Sign Request Flow** (with SessionToken validation - v0.1.6+):
 ```
-Web → web:signMessage {uuid, encryptedPayload, nonce}
-Backend → mobile:signRequest (forwards encrypted)
-Mobile decrypts → shows UI → user approves
-Mobile → mobile:response {uuid, encryptedPayload, nonce}
-Backend → web:response (forwards encrypted)
-Web decrypts → displays result
+1. Web dApp:
+   - Creates SignRequest {id, type, chainType, chainId, payload, sessionToken, timestamp}
+   - Encrypts request with shared secret
+   - Emits: dapp:request {uuid, encryptedPayload, nonce}
+
+2. Backend:
+   - Forwards to wallet: wallet:request
+
+3. Mobile Wallet:
+   - Decrypts request
+   - Validates sessionToken (7 checks - see Validation Rules above)
+   - If invalid: Rejects request immediately
+   - If valid: Shows approval UI to user
+
+4. User approves/rejects:
+   - Wallet calls signer.signMessage() or signer.signTransaction()
+   - Creates SignResponse {id, status, result/error, timestamp}
+   - Encrypts response
+   - Emits: wallet:response {uuid, encryptedPayload, nonce}
+
+5. Backend:
+   - Forwards to dApp: dapp:response
+
+6. Web dApp:
+   - Decrypts response
+   - Displays result to user
 ```
 
 ### React Native Specific Issues
