@@ -16,12 +16,13 @@ export interface StoredSessionData {
 }
 
 /**
- * Session storage key
+ * Session storage key (plural for multiple sessions)
  */
-const STORAGE_KEY = 'phoenix_wallet_session';
+const STORAGE_KEY = 'phoenix_wallet_sessions';
 
 /**
  * Session storage manager
+ * Supports multiple simultaneous sessions
  */
 export class SessionStorage {
   private storage: StorageAdapter;
@@ -34,17 +35,23 @@ export class SessionStorage {
 
   /**
    * Save session data
+   * @param session - Session to save
+   * @param serverUrl - Server URL
+   * @param encryption - Encryption manager
+   * @param uuid - Optional UUID (uses session.uuid if not provided)
    */
   async saveSession(
     session: Session,
     serverUrl: string,
-    encryption: EncryptionManager
+    encryption: EncryptionManager,
+    uuid?: string
   ): Promise<void> {
     if (!this.enabled) {
       return;
     }
 
     try {
+      const sessionUuid = uuid || session.uuid;
       const data: StoredSessionData = {
         session,
         serverUrl,
@@ -52,39 +59,80 @@ export class SessionStorage {
         peerPublicKey: encryption.getPeerPublicKey(),
       };
 
-      await this.storage.setItem(STORAGE_KEY, JSON.stringify(data));
+      // Load existing sessions
+      const allSessions = await this.loadSessions();
+      
+      // Update or add this session
+      allSessions.set(sessionUuid, data);
+
+      // Save all sessions
+      const sessionsObj = Object.fromEntries(allSessions);
+      await this.storage.setItem(STORAGE_KEY, JSON.stringify(sessionsObj));
     } catch (error) {
       console.warn('[Phoenix Wallet] Failed to save session:', error);
     }
   }
 
   /**
-   * Load session data
+   * Load all sessions
+   * @returns Map of UUID to StoredSessionData
    */
-  async loadSession(): Promise<StoredSessionData | null> {
+  async loadSessions(): Promise<Map<string, StoredSessionData>> {
     if (!this.enabled) {
-      return null;
+      return new Map();
     }
 
     try {
       const data = await this.storage.getItem(STORAGE_KEY);
       if (!data) {
-        return null;
+        return new Map();
       }
 
-      return JSON.parse(data) as StoredSessionData;
+      const sessionsObj = JSON.parse(data) as Record<string, StoredSessionData>;
+      return new Map(Object.entries(sessionsObj));
     } catch (error) {
-      console.warn('[Phoenix Wallet] Failed to load session:', error);
-      return null;
+      console.warn('[Phoenix Wallet] Failed to load sessions:', error);
+      return new Map();
     }
   }
 
   /**
-   * Clear session data
+   * Load single session (backward compatibility)
+   * @deprecated Use loadSessions() instead
    */
-  async clearSession(): Promise<void> {
+  async loadSession(): Promise<StoredSessionData | null> {
+    const sessions = await this.loadSessions();
+    if (sessions.size === 0) {
+      return null;
+    }
+    // Return first session for backward compatibility
+    const firstValue = sessions.values().next().value;
+    return firstValue || null;
+  }
+
+  /**
+   * Clear session data
+   * @param uuid - Optional UUID (clears all if not provided)
+   */
+  async clearSession(uuid?: string): Promise<void> {
     try {
-      await this.storage.removeItem(STORAGE_KEY);
+      if (uuid) {
+        // Clear specific session
+        const allSessions = await this.loadSessions();
+        allSessions.delete(uuid);
+        
+        if (allSessions.size === 0) {
+          // Remove storage key if no sessions left
+          await this.storage.removeItem(STORAGE_KEY);
+        } else {
+          // Save remaining sessions
+          const sessionsObj = Object.fromEntries(allSessions);
+          await this.storage.setItem(STORAGE_KEY, JSON.stringify(sessionsObj));
+        }
+      } else {
+        // Clear all sessions
+        await this.storage.removeItem(STORAGE_KEY);
+      }
     } catch (error) {
       console.warn('[Phoenix Wallet] Failed to clear session:', error);
     }

@@ -2,15 +2,16 @@ import { Session, SignRequest } from './protocol';
 
 /**
  * Wallet client events
+ * All events include sessionUuid to identify which dApp session they belong to
  */
 export interface PhoenixWalletEvents {
-  session_connected: (session: Session) => void;
-  session_disconnected: () => void;
-  session_restored: (session: Session) => void;
-  sign_request: (request: SignRequest) => void;
-  request_approved: (requestId: string) => void;
-  request_rejected: (requestId: string) => void;
-  error: (error: Error) => void;
+  session_connected: (session: Session, sessionUuid: string) => void;
+  session_disconnected: (sessionUuid: string) => void;
+  session_restored: (session: Session, sessionUuid: string) => void;
+  sign_request: (request: SignRequest, sessionUuid: string) => void;
+  request_approved: (requestId: string, sessionUuid: string) => void;
+  request_rejected: (requestId: string, sessionUuid: string) => void;
+  error: (error: Error, sessionUuid?: string) => void;
 }
 
 /**

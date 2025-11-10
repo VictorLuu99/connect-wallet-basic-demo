@@ -75,13 +75,10 @@ export default function Index() {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanning, setScanning] = useState(false);
 
-  // Connection state
-  const [connected, setConnected] = useState(false);
-  const [session, setSession] = useState<Session | null>(null);
-  const isAutoReconnectingRef = useRef(false);
-
-  // Request state
-  const [pendingRequest, setPendingRequest] = useState<SignRequest | null>(null);
+  // Connection state - support multiple sessions
+  const [sessions, setSessions] = useState<Map<string, Session>>(new Map());
+  const [pendingRequests, setPendingRequests] = useState<Map<string, SignRequest>>(new Map());
+  const isAutoReconnectingRef = useRef<Set<string>>(new Set());
 
   // Mock wallet data
   const [walletAddress] = useState('0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0');
@@ -97,106 +94,118 @@ export default function Index() {
   }));
 
   /**
-   * Setup Phoenix SDK event listeners and check for restored session
+   * Setup Phoenix SDK event listeners and check for restored sessions
    */
   useEffect(() => {
-    // Check if session was restored on mount and auto-reconnect
-    const checkSession = async () => {
+    // Check if sessions were restored on mount and auto-reconnect
+    const checkSessions = async () => {
       try {
         // CRITICAL: Wait for SDK to finish loading from storage
         await phoenixClient.waitForInitialization();
         
         const hasStored = await phoenixClient.hasStoredSession();
         if (hasStored) {
-          const currentSession = phoenixClient.getSession();
-          if (currentSession && currentSession.connected === false) {
-            console.log('📦 Stored session found, auto-reconnecting...');
-            isAutoReconnectingRef.current = true;
-            // Auto-reconnect on reload (similar to web app behavior)
-            try {
-              await phoenixClient.reconnectWithSigner(signer);
-              console.log('✅ Auto-reconnected successfully');
-            } catch (error: any) {
-              console.warn('⚠️ Auto-reconnect failed:', error.message);
-              isAutoReconnectingRef.current = false;
-              // Don't show alert on auto-reconnect failure - user can manually reconnect
-            }
-          } else if (currentSession?.connected) {
-            // Session already connected (shouldn't happen after reload, but handle it)
-            console.log('✅ Session already connected');
-            setConnected(true);
-            setSession(currentSession);
+          // Try to reconnect stored sessions
+          try {
+            // Reconnect first stored session (can be extended to reconnect all)
+            await phoenixClient.reconnectWithSigner(signer);
+            console.log('✅ Auto-reconnected successfully');
+          } catch (error: any) {
+            console.warn('⚠️ Auto-reconnect failed:', error.message);
+            // Don't show alert on auto-reconnect failure - user can manually reconnect
           }
         }
       } catch (error: any) {
-        console.warn('⚠️ Failed to check/restore session:', error.message);
+        console.warn('⚠️ Failed to check/restore sessions:', error.message);
       }
     };
-    checkSession();
+    checkSessions();
 
     // Session restored (from storage)
-    phoenixClient.on('session_restored', (sessionData) => {
-      console.log('📦 Session restored:', sessionData);
-      // User can call reconnectWithSigner() to fully reconnect
+    phoenixClient.on('session_restored', (sessionData: Session, sessionUuid: string) => {
+      console.log('📦 Session restored:', sessionUuid, sessionData);
+      setSessions((prev) => {
+        const next = new Map(prev);
+        next.set(sessionUuid, sessionData);
+        return next;
+      });
     });
 
     // Session connected
-    phoenixClient.on('session_connected', (sessionData) => {
-      console.log('✅ Connected to dApp:', sessionData);
-      const wasAutoReconnecting = isAutoReconnectingRef.current;
-      setConnected(true);
-      setSession(sessionData);
-      isAutoReconnectingRef.current = false;
+    phoenixClient.on('session_connected', (sessionData: Session, sessionUuid: string) => {
+      console.log('✅ Connected to dApp:', sessionUuid, sessionData);
+      const wasAutoReconnecting = isAutoReconnectingRef.current.has(sessionUuid);
+      
+      setSessions((prev) => {
+        const next = new Map(prev);
+        next.set(sessionUuid, sessionData);
+        return next;
+      });
+      
+      isAutoReconnectingRef.current.delete(sessionUuid);
+      
       // Only show alert if this is a new connection (not auto-reconnect)
       if (!wasAutoReconnecting) {
-        Alert.alert('Success', 'Connected to dApp!');
+        Alert.alert('Success', `Connected to dApp! (${sessionUuid.substring(0, 8)}...)`);
       }
     });
 
     // Session disconnected
-    phoenixClient.on('session_disconnected', () => {
-      console.log('❌ Disconnected from dApp');
-      // Don't update state if we're in the middle of restoring a session
-      // The session_connected event will update the state if reconnection succeeds
-      const currentSession = phoenixClient.getSession();
-      if (!currentSession || !currentSession.connected) {
-        setConnected(false);
-        setSession(null);
-        setPendingRequest(null);
-      } else {
-        console.log('[React] Ignoring disconnect event - session is still connected');
-      }
+    phoenixClient.on('session_disconnected', (sessionUuid: string) => {
+      console.log('❌ Disconnected from dApp:', sessionUuid);
+      setSessions((prev) => {
+        const next = new Map(prev);
+        next.delete(sessionUuid);
+        return next;
+      });
+      setPendingRequests((prev) => {
+        const next = new Map(prev);
+        next.delete(sessionUuid);
+        return next;
+      });
     });
 
     // Sign request received
-    phoenixClient.on('sign_request', (request: SignRequest) => {
-      console.log('📝 Sign request received:', request.type);
-      setPendingRequest(request);
+    phoenixClient.on('sign_request', (request: SignRequest, sessionUuid: string) => {
+      console.log('📝 Sign request received:', request.type, 'from session:', sessionUuid);
+      setPendingRequests((prev) => {
+        const next = new Map(prev);
+        next.set(sessionUuid, request);
+        return next;
+      });
     });
 
     // Request approved
-    phoenixClient.on('request_approved', (requestId) => {
-      console.log('✅ Request approved:', requestId);
-      setPendingRequest(null);
+    phoenixClient.on('request_approved', (requestId: string, sessionUuid: string) => {
+      console.log('✅ Request approved:', requestId, 'from session:', sessionUuid);
+      setPendingRequests((prev) => {
+        const next = new Map(prev);
+        next.delete(sessionUuid);
+        return next;
+      });
     });
 
     // Request rejected
-    phoenixClient.on('request_rejected', (requestId) => {
-      console.log('❌ Request rejected:', requestId);
-      setPendingRequest(null);
+    phoenixClient.on('request_rejected', (requestId: string, sessionUuid: string) => {
+      console.log('❌ Request rejected:', requestId, 'from session:', sessionUuid);
+      setPendingRequests((prev) => {
+        const next = new Map(prev);
+        next.delete(sessionUuid);
+        return next;
+      });
     });
 
     // Error
-    phoenixClient.on('error', (error) => {
-      console.error('❌ Phoenix error:', error);
+    phoenixClient.on('error', (error: Error, sessionUuid?: string) => {
+      console.error('❌ Phoenix error:', error, sessionUuid ? `(session: ${sessionUuid})` : '');
       Alert.alert('Error', error.message);
     });
 
     // Cleanup
     return () => {
-      phoenixClient.disconnect();
+      phoenixClient.disconnectAll();
     };
-  }, [phoenixClient]);
+  }, [phoenixClient, signer]);
 
   /**
    * Handle QR Code scan
@@ -220,17 +229,11 @@ export default function Index() {
         scannedUUID = phoenixData.uuid;
       }
 
-      // Check if already connected to a different session
-      const currentSession = phoenixClient.getSession();
-      if (currentSession && currentSession.uuid !== scannedUUID) {
-        console.log('[Wallet] Different UUID detected, disconnecting old session first');
-        phoenixClient.disconnect();
-      }
-
       // Connect using Phoenix SDK (SDK handles parsing internally)
-      await phoenixClient.connect(data, signer);
+      // SDK now supports multiple simultaneous connections
+      const sessionUuid = await phoenixClient.connect(data, signer);
 
-      console.log('🔗 Connected to dApp');
+      console.log('🔗 Connected to dApp with session:', sessionUuid);
     } catch (error: any) {
       console.error('Failed to connect:', error);
       Alert.alert('Connection Failed', error.message);
@@ -240,11 +243,12 @@ export default function Index() {
   /**
    * Approve sign request
    */
-  const handleApprove = async () => {
-    if (!pendingRequest) return;
+  const handleApprove = async (sessionUuid: string) => {
+    const request = pendingRequests.get(sessionUuid);
+    if (!request) return;
 
     try {
-      await phoenixClient.approveRequest(pendingRequest.id);
+      await phoenixClient.approveRequest(request.id, sessionUuid);
       Alert.alert('Success', 'Request approved!');
     } catch (error: any) {
       console.error('Failed to approve:', error);
@@ -255,11 +259,12 @@ export default function Index() {
   /**
    * Reject sign request
    */
-  const handleReject = async () => {
-    if (!pendingRequest) return;
+  const handleReject = async (sessionUuid: string) => {
+    const request = pendingRequests.get(sessionUuid);
+    if (!request) return;
 
     try {
-      await phoenixClient.rejectRequest(pendingRequest.id, 'User rejected');
+      await phoenixClient.rejectRequest(request.id, 'User rejected', sessionUuid);
       Alert.alert('Rejected', 'Request rejected');
     } catch (error: any) {
       console.error('Failed to reject:', error);
@@ -268,10 +273,17 @@ export default function Index() {
   };
 
   /**
-   * Disconnect from dApp
+   * Disconnect from specific dApp
    */
-  const handleDisconnect = () => {
-    phoenixClient.disconnect();
+  const handleDisconnect = (sessionUuid: string) => {
+    phoenixClient.disconnect(sessionUuid);
+  };
+
+  /**
+   * Disconnect all dApps
+   */
+  const handleDisconnectAll = () => {
+    phoenixClient.disconnectAll();
   };
 
   /**
@@ -287,14 +299,32 @@ export default function Index() {
     // }
     // setScanning(true);
     // Test data - Phoenix URI format: phoenix:{JSON}
-    const phoenixURI = `phoenix://connect?version=1&uuid=fac7effa-0f57-4327-a844-f061fb0dc93f&serverUrl=http%3A%2F%2Flocalhost%3A3001&publicKey=GkE874bJbyna%2FLAQ1eGh3CgpO66uq1Xnx0Dw0vSMKQY%3D`
+    const phoenixURI = `phoenix://connect?version=1&uuid=bac054dc-0425-44e1-9627-5d2608bdeb2b&serverUrl=http%3A%2F%2Flocalhost%3A3001&publicKey=H8gEY814buTL%2FOw0RKI%2FmwNlTC0iOkfpftQraFCTCUI%3D`
     handleQRScanned({ data: phoenixURI });
   };
 
-  /**
-   * Render approval modal
+    /**
+   * Start QR scanning
    */
-  const renderApprovalModal = () => {
+    const startScanning2 = async () => {
+      // if (!permission?.granted) {
+      //   const { granted } = await requestPermission();
+      //   if (!granted) {
+      //     Alert.alert('Permission Denied', 'Camera permission is required to scan QR codes');
+      //     return;
+      //   }
+      // }
+      // setScanning(true);
+      // Test data - Phoenix URI format: phoenix:{JSON}
+      const phoenixURI = `phoenix://connect?version=1&uuid=b00ce54a-0934-4f72-92f0-8f3dd0ebf376&serverUrl=http%3A%2F%2Flocalhost%3A3001&publicKey=ZIBLKkSIpa18LV4qkBlR5m5Pm%2F29M3j3R5U%2B4%2BgF8g8%3D`
+      handleQRScanned({ data: phoenixURI });
+    };
+
+  /**
+   * Render approval modal for a specific session
+   */
+  const renderApprovalModal = (sessionUuid: string) => {
+    const pendingRequest = pendingRequests.get(sessionUuid);
     if (!pendingRequest) return null;
 
     // Decode payload from JSON string
@@ -382,10 +412,10 @@ export default function Index() {
             </View>
 
             <View style={styles.buttonRow}>
-              <TouchableOpacity style={[styles.button, styles.rejectButton]} onPress={handleReject}>
+              <TouchableOpacity style={[styles.button, styles.rejectButton]} onPress={() => handleReject(sessionUuid)}>
                 <Text style={styles.buttonText}>❌ Reject</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.button, styles.approveButton]} onPress={handleApprove}>
+              <TouchableOpacity style={[styles.button, styles.approveButton]} onPress={() => handleApprove(sessionUuid)}>
                 <Text style={styles.buttonText}>✅ Approve</Text>
               </TouchableOpacity>
             </View>
@@ -402,8 +432,8 @@ export default function Index() {
           <Text style={styles.title}>🔗 Phoenix Wallet</Text>
           <Text style={styles.subtitle}>Using @phoenix-demo/wallet SDK</Text>
           <View style={styles.statusBadge}>
-            {connected ? (
-              <Text style={styles.statusConnected}>✅ Connected</Text>
+            {sessions.size > 0 ? (
+              <Text style={styles.statusConnected}>✅ {sessions.size} dApp{sessions.size > 1 ? 's' : ''} Connected</Text>
             ) : (
               <Text style={styles.statusDisconnected}>❌ Disconnected</Text>
             )}
@@ -424,23 +454,47 @@ export default function Index() {
         </View>
 
         {/* Actions */}
-        {!connected ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>📱 Connect to dApp</Text>
+          <TouchableOpacity style={styles.primaryButton} onPress={startScanning}>
+            <Text style={styles.buttonText}>Scan QR Code</Text>
+          </TouchableOpacity>
+        </View>
+
+             {/* Actions */}
+             <View style={styles.card}>
+          <Text style={styles.cardTitle}>📱 Connect to dApp</Text>
+          <TouchableOpacity style={styles.primaryButton} onPress={startScanning2}>
+            <Text style={styles.buttonText}>Scan QR Code</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Connected Sessions List */}
+        {sessions.size > 0 && (
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>📱 Connect to dApp</Text>
-            <TouchableOpacity style={styles.primaryButton} onPress={startScanning}>
-              <Text style={styles.buttonText}>Scan QR Code</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>ℹ️ Session Info</Text>
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>UUID:</Text>
-              <Text style={styles.infoValueSmall}>{session?.uuid?.substring(0, 12)}...</Text>
-            </View>
-            <TouchableOpacity style={styles.secondaryButton} onPress={handleDisconnect}>
-              <Text style={styles.buttonText}>Disconnect</Text>
-            </TouchableOpacity>
+            <Text style={styles.cardTitle}>🔗 Connected dApps ({sessions.size})</Text>
+            {Array.from(sessions.entries()).map(([sessionUuid, session]) => (
+              <View key={sessionUuid} style={styles.sessionItem}>
+                <View style={styles.sessionInfo}>
+                  <Text style={styles.sessionUuid}>UUID: {sessionUuid.substring(0, 12)}...</Text>
+                  <Text style={styles.sessionChain}>{session.chainType?.toUpperCase()} - {session.chainId || 'N/A'}</Text>
+                  {pendingRequests.has(sessionUuid) && (
+                    <Text style={styles.pendingRequest}>⚠️ Pending Request</Text>
+                  )}
+                </View>
+                <TouchableOpacity 
+                  style={styles.disconnectButton} 
+                  onPress={() => handleDisconnect(sessionUuid)}
+                >
+                  <Text style={styles.disconnectButtonText}>Disconnect</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+            {sessions.size > 1 && (
+              <TouchableOpacity style={styles.secondaryButton} onPress={handleDisconnectAll}>
+                <Text style={styles.buttonText}>Disconnect All</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
       </ScrollView>
@@ -464,8 +518,12 @@ export default function Index() {
         </Modal>
       )}
 
-      {/* Approval Modal */}
-      {renderApprovalModal()}
+      {/* Approval Modals - one per session with pending request */}
+      {Array.from(pendingRequests.keys()).map((sessionUuid) => (
+        <View key={sessionUuid}>
+          {renderApprovalModal(sessionUuid)}
+        </View>
+      ))}
     </SafeAreaView>
   );
 }
@@ -627,5 +685,43 @@ const styles = StyleSheet.create({
   },
   approveButton: {
     backgroundColor: '#22c55e',
+  },
+  sessionItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  sessionInfo: {
+    flex: 1,
+  },
+  sessionUuid: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 4,
+    fontFamily: 'monospace',
+  },
+  sessionChain: {
+    fontSize: 12,
+    color: '#666',
+  },
+  pendingRequest: {
+    fontSize: 12,
+    color: '#f59e0b',
+    marginTop: 4,
+    fontWeight: '600',
+  },
+  disconnectButton: {
+    backgroundColor: '#ef4444',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  disconnectButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
   },
 });
