@@ -1,0 +1,28 @@
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "rootDir": ".",
+    "sourceMap": true,
+    "declaration": false,
+    "moduleResolution": "node",
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "importHelpers": true,
+    "target": "ES2020",
+    "module": "esnext",
+    "lib": ["ES2020", "dom"],
+    "skipLibCheck": true,
+    "skipDefaultLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@phoenix-wallet/core": ["packages/core/src/index.ts"],
+      "@phoenix-wallet/evm": ["packages/evm/src/index.ts"],
+      "@phoenix-wallet/solana": ["packages/solana/src/index.ts"],
+      "@phoenix-wallet/aptos": ["packages/aptos/src/index.ts"],
+      "@phoenix-wallet/sui": ["packages/sui/src/index.ts"],
+      "@phoenix-wallet/privy": ["packages/privy/src/index.ts"]
+    }
+  },
+  "exclude": ["node_modules", "tmp"]
+}
+

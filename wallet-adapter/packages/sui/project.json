@@ -1,0 +1,39 @@
+{
+  "name": "@phoenix-wallet/sui",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/sui/src",
+  "projectType": "library",
+  "targets": {
+    "build": {
+      "executor": "@nx/js:tsc",
+      "outputs": [
+        "{options.outputPath}"
+      ],
+      "options": {
+        "outputPath": "packages/sui/dist",
+        "tsConfig": "packages/sui/tsconfig.json",
+        "packageJson": "packages/sui/package.json",
+        "main": "packages/sui/src/index.ts"
+      },
+      "dependsOn": [
+        "^build"
+      ]
+    },
+    "lint": {
+      "executor": "@nx/js:tsc",
+      "options": {
+        "tsConfig": "packages/sui/tsconfig.json"
+      }
+    }
+  },
+  "dependencies": {    "@mysten/sui": "^1.43.2",
+  "@mysten/wallet-standard": "^0.19.4"
+},
+  "tags": [
+    "type:chain",
+    "scope:sui"
+  ],
+  "implicitDependencies": [
+    "@phoenix-wallet/core"
+  ]
+}

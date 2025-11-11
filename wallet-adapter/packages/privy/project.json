@@ -1,0 +1,28 @@
+{
+  "name": "@phoenix-wallet/privy",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/privy/src",
+  "projectType": "library",
+  "targets": {
+    "build": {
+      "executor": "@nx/js:tsc",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "outputPath": "packages/privy/dist",
+        "tsConfig": "packages/privy/tsconfig.json",
+        "packageJson": "packages/privy/package.json",
+        "main": "packages/privy/src/index.ts"
+      },
+      "dependsOn": ["^build"]
+    },
+    "lint": {
+      "executor": "@nx/js:tsc",
+      "options": {
+        "tsConfig": "packages/privy/tsconfig.json"
+      }
+    }
+  },
+  "tags": ["type:integration", "scope:privy"],
+  "implicitDependencies": ["@phoenix-wallet/core"]
+}
+

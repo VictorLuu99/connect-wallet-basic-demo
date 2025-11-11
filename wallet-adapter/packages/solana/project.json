@@ -1,0 +1,36 @@
+{
+  "name": "@phoenix-wallet/solana",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/solana/src",
+  "projectType": "library",
+  "targets": {
+    "build": {
+      "executor": "@nx/js:tsc",
+      "outputs": [
+        "{options.outputPath}"
+      ],
+      "options": {
+        "outputPath": "packages/solana/dist",
+        "tsConfig": "packages/solana/tsconfig.json",
+        "packageJson": "packages/solana/package.json",
+        "main": "packages/solana/src/index.ts"
+      },
+      "dependsOn": [
+        "^build"
+      ]
+    },
+    "lint": {
+      "executor": "@nx/js:tsc",
+      "options": {
+        "tsConfig": "packages/solana/tsconfig.json"
+      }
+    }
+  },
+  "tags": [
+    "type:chain",
+    "scope:solana"
+  ],
+  "implicitDependencies": [
+    "@phoenix-wallet/core"
+  ]
+}

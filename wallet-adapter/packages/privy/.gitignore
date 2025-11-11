@@ -1,0 +1,12 @@
+dist
+node_modules
+*.js
+*.d.ts
+*.d.ts.map
+*.js.map
+!*.config.js
+
+# Keep source files
+!src/**/*.ts
+!src/**/*.tsx
+

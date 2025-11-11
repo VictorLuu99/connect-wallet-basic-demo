@@ -1,0 +1,26 @@
+{
+  "name": "@phoenix-wallet/core",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/core/src",
+  "projectType": "library",
+  "targets": {
+    "build": {
+      "executor": "@nx/js:tsc",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "outputPath": "packages/core/dist",
+        "tsConfig": "packages/core/tsconfig.json",
+        "packageJson": "packages/core/package.json",
+        "main": "packages/core/src/index.ts"
+      }
+    },
+    "lint": {
+      "executor": "@nx/js:tsc",
+      "options": {
+        "tsConfig": "packages/core/tsconfig.json"
+      }
+    }
+  },
+  "tags": ["type:core", "scope:shared"]
+}
+

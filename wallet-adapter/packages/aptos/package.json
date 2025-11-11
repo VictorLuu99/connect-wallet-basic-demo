@@ -1,0 +1,66 @@
+{
+  "name": "@phoenix-wallet/aptos",
+  "version": "1.0.5",
+  "description": "Aptos chain support for Phoenix Wallet",
+  "main": "./dist/cjs/src/index.js",
+  "types": "./dist/esm/src/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/esm/src/index.d.ts",
+        "default": "./dist/esm/src/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/src/index.d.ts",
+        "default": "./dist/cjs/src/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "npm run build:esm && npm run build:cjs",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "lint": "tsc --noEmit",
+    "build:esm": "tsc",
+    "build:cjs": "tsc --project tsconfig.cjs.json"
+  },
+  "dependencies": {
+    "@aptos-labs/ts-sdk": "^4.0.0",
+    "@aptos-labs/wallet-adapter-core": "^7.1.1",
+    "@aptos-labs/wallet-standard": "^0.5.1",
+    "@phoenix-wallet/core": "workspace:*",
+    "@keyv/dynamo": "^1.0.1",
+    "@keyv/etcd": "^2.1.1",
+    "@keyv/memcache": "^2.0.2",
+    "@keyv/mongo": "^3.0.3",
+    "@keyv/mysql": "^2.1.4",
+    "@keyv/postgres": "^2.1.7",
+    "@keyv/redis": "^5.1.0",
+    "@keyv/sqlite": "^4.0.5",
+    "@keyv/valkey": "^1.0.8"
+  },
+  "peerDependencies": {
+    "react": ">=17.0.0"
+  },
+  "keywords": [
+    "wallet",
+    "aptos",
+    "web3",
+    "blockchain"
+  ],
+  "author": "",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "tslib": "^2.8.1"
+  },
+  "module": "./dist/esm/src/index.js",
+  "sideEffects": false
+}

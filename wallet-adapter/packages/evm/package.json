@@ -1,0 +1,61 @@
+{
+  "name": "@phoenix-wallet/evm",
+  "version": "1.0.5",
+  "description": "EVM chain support for Phoenix Wallet - Ethereum, BSC, Polygon, and more",
+  "main": "./dist/cjs/src/index.js",
+  "module": "./dist/esm/src/index.js",
+  "types": "./dist/esm/src/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/esm/src/index.d.ts",
+        "default": "./dist/esm/src/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/src/index.d.ts",
+        "default": "./dist/cjs/src/index.js"
+      }
+    }
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "npm run build:esm && npm run build:cjs",
+    "build:esm": "tsc",
+    "build:cjs": "tsc --project tsconfig.cjs.json",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@binance/w3w-ethereum-provider": "^1.1.8-alpha.0",
+    "@metamask/sdk": "^0.33.0",
+    "@phoenix-wallet/core": "workspace:*",
+    "ethers": "^6.14.3",
+    "viem": "^2.30.6"
+  },
+  "peerDependencies": {
+    "react": ">=17.0.0"
+  },
+  "keywords": [
+    "wallet",
+    "ethereum",
+    "evm",
+    "web3",
+    "metamask",
+    "coinbase",
+    "blockchain"
+  ],
+  "author": "",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "tslib": "^2.8.1"
+  }
+}

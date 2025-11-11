@@ -1,0 +1,10 @@
+# Add files here to ignore them from prettier formatting
+
+/dist
+/coverage
+.next
+next-env.d.ts
+node_modules
+yarn.lock
+package-lock.json
+public

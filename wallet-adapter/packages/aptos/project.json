@@ -1,0 +1,36 @@
+{
+  "name": "@phoenix-wallet/aptos",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/aptos/src",
+  "projectType": "library",
+  "targets": {
+    "build": {
+      "executor": "@nx/js:tsc",
+      "outputs": [
+        "{options.outputPath}"
+      ],
+      "options": {
+        "outputPath": "packages/aptos/dist",
+        "tsConfig": "packages/aptos/tsconfig.json",
+        "packageJson": "packages/aptos/package.json",
+        "main": "packages/aptos/src/index.ts"
+      },
+      "dependsOn": [
+        "^build"
+      ]
+    },
+    "lint": {
+      "executor": "@nx/js:tsc",
+      "options": {
+        "tsConfig": "packages/aptos/tsconfig.json"
+      }
+    }
+  },
+  "tags": [
+    "type:chain",
+    "scope:aptos"
+  ],
+  "implicitDependencies": [
+    "@phoenix-wallet/core"
+  ]
+}

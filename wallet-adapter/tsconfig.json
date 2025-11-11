@@ -1,0 +1,42 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./src/*"],
+      "@phoenix-wallet/core": ["./packages/core/src"],
+      "@phoenix-wallet/evm": ["./packages/evm/src"],
+      "@phoenix-wallet/solana": ["./packages/solana/src"],
+      "@phoenix-wallet/aptos": ["./packages/aptos/src"],
+      "@phoenix-wallet/sui": ["./packages/sui/src"],
+      "@phoenix-wallet/privy": ["./packages/privy/src"],
+      "@phoenix-wallet/wallet-adapter": ["./src/phoenix-wallet"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    "packages/evm/src/types/global.d.ts",
+    "packages/aptos/src/types/global.d.ts",
+    "packages/sui/src/types/global.d.ts"
+  ],
+  "exclude": ["node_modules"]
+}

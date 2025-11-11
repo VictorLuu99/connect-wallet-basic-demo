@@ -1,0 +1,28 @@
+{
+  "name": "@phoenix-wallet/evm",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/evm/src",
+  "projectType": "library",
+  "targets": {
+    "build": {
+      "executor": "@nx/js:tsc",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "outputPath": "packages/evm/dist",
+        "tsConfig": "packages/evm/tsconfig.json",
+        "packageJson": "packages/evm/package.json",
+        "main": "packages/evm/src/index.ts"
+      },
+      "dependsOn": ["^build"]
+    },
+    "lint": {
+      "executor": "@nx/js:tsc",
+      "options": {
+        "tsConfig": "packages/evm/tsconfig.json"
+      }
+    }
+  },
+  "tags": ["type:chain", "scope:evm"],
+  "implicitDependencies": ["@phoenix-wallet/core"]
+}
+
