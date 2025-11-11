@@ -1,6 +1,7 @@
 import {
   SignRequest,
   SignResponse,
+  SignResponseResult,
   WalletSigner,
 } from '../types';
 import { isValidTimestamp } from '../utils/validation';
@@ -69,7 +70,7 @@ export class RequestHandler {
     const request = this.pendingRequest;
 
     try {
-      let result: import('../types').SignResponseResult;
+      let result: SignResponseResult;
 
       // Decode payload from JSON string
       const decodedPayload = decodePayload<MessagePayload | TransactionPayload>(request.payload);
@@ -78,54 +79,22 @@ export class RequestHandler {
         throw new Error('Invalid payload: decoded payload is null');
       }
 
-      if (request.type === 'sign_message') {
-        const signature = await this.signer.signMessage(decodedPayload as MessagePayload);
-        result = { 
-          signature, 
-          message: typeof decodedPayload === 'object' && decodedPayload !== null && 'message' in decodedPayload 
-            ? String((decodedPayload as { message?: unknown }).message || decodedPayload)
-            : String(decodedPayload)
-        };
-      } else if (request.type === 'sign_transaction') {
-        const signature = await this.signer.signTransaction(decodedPayload as TransactionPayload);
-        result = {
-          signature,
-          from: this.signer.address,
-        };
-      } else if (request.type === 'sign_all_transactions') {
-        // Handle batch signing (e.g., Solana)
-        if (!this.signer.signAllTransactions) {
-          throw new Error('signAllTransactions not supported by signer');
-        }
-        const transactions = (typeof decodedPayload === 'object' && decodedPayload !== null && 'transactions' in decodedPayload)
-          ? (decodedPayload as { transactions?: unknown }).transactions
-          : decodedPayload;
-        if (!Array.isArray(transactions)) {
-          throw new Error('sign_all_transactions requires array of transactions');
-        }
-        const signatures = await this.signer.signAllTransactions(transactions as TransactionPayload[]);
-        result = {
-          signatures,
-          from: this.signer.address,
-        };
-      } else if (request.type === 'send_transaction') {
-        // Handle direct send (e.g., EVM)
-        if (this.signer.sendTransaction) {
-          const txHash = await this.signer.sendTransaction(decodedPayload as TransactionPayload);
-          result = {
-            txHash,
-            from: this.signer.address,
-          };
-        } else {
-          // Fallback: sign and return signature (wallet can broadcast separately)
-          const signature = await this.signer.signTransaction(decodedPayload as TransactionPayload);
-          result = {
-            signature,
-            from: this.signer.address,
-          };
-        }
-      } else {
-        throw new Error(`Unsupported request type: ${request.type}`);
+      // Route to appropriate handler based on request type
+      switch (request.type) {
+        case 'sign_message':
+          result = await this.handleSignMessage(decodedPayload);
+          break;
+        case 'sign_transaction':
+          result = await this.handleSignTransaction(decodedPayload);
+          break;
+        case 'sign_all_transactions':
+          result = await this.handleSignAllTransactions(decodedPayload);
+          break;
+        case 'send_transaction':
+          result = await this.handleSendTransaction(decodedPayload);
+          break;
+        default:
+          throw new Error(`Unsupported request type: ${(request as SignRequest).type}`);
       }
 
       const response: SignResponse = {
@@ -178,5 +147,142 @@ export class RequestHandler {
     this.clearPendingRequest();
 
     return response;
+  }
+
+  /**
+   * Handle sign message request
+   */
+  private async handleSignMessage(
+    decodedPayload: MessagePayload | TransactionPayload
+  ): Promise<SignResponseResult> {
+    if (!this.signer) {
+      throw new Error('No signer configured');
+    }
+
+    const signature = await this.signer.signMessage(decodedPayload as MessagePayload);
+    const message = this.extractMessageFromPayload(decodedPayload);
+
+    return {
+      signature,
+      message,
+      from: this.signer.address,
+    };
+  }
+
+  /**
+   * Handle sign transaction request
+   */
+  private async handleSignTransaction(
+    decodedPayload: MessagePayload | TransactionPayload
+  ): Promise<SignResponseResult> {
+    if (!this.signer) {
+      throw new Error('No signer configured');
+    }
+
+    const signature = await this.signer.signTransaction(decodedPayload as TransactionPayload);
+
+    return {
+      signature,
+      from: this.signer.address,
+    };
+  }
+
+  /**
+   * Handle sign all transactions request (batch signing)
+   */
+  private async handleSignAllTransactions(
+    decodedPayload: MessagePayload | TransactionPayload
+  ): Promise<SignResponseResult> {
+    if (!this.signer) {
+      throw new Error('No signer configured');
+    }
+
+    if (!this.signer.signAllTransactions) {
+      throw new Error('Batch transaction signing not supported by signer');
+    }
+
+    const transactions = this.extractTransactionsArray(decodedPayload);
+    const signatures = await this.signer.signAllTransactions(transactions);
+
+    return {
+      signatures,
+      from: this.signer.address,
+    };
+  }
+
+  /**
+   * Handle send transaction request (sign and broadcast)
+   */
+  private async handleSendTransaction(
+    decodedPayload: MessagePayload | TransactionPayload
+  ): Promise<SignResponseResult> {
+    if (!this.signer) {
+      throw new Error('No signer configured');
+    }
+
+    // Prefer direct send if available (e.g., EVM)
+    if (this.signer.sendTransaction) {
+      const txHash = await this.signer.sendTransaction(decodedPayload as TransactionPayload);
+      return {
+        txHash,
+        from: this.signer.address,
+      };
+    }
+
+    // Fallback: sign only (wallet can broadcast separately)
+    const signature = await this.signer.signTransaction(decodedPayload as TransactionPayload);
+    return {
+      signature,
+      from: this.signer.address,
+    };
+  }
+
+  /**
+   * Extract message string from payload
+   */
+  private extractMessageFromPayload(payload: MessagePayload | TransactionPayload): string {
+    if (typeof payload === 'string') {
+      return payload;
+    }
+
+    if (payload instanceof Uint8Array) {
+      return new TextDecoder().decode(payload);
+    }
+
+    if (typeof payload === 'object' && payload !== null) {
+      if ('message' in payload) {
+        const message = (payload as { message?: unknown }).message;
+        if (typeof message === 'string') {
+          return message;
+        }
+        if (message instanceof Uint8Array) {
+          return new TextDecoder().decode(message);
+        }
+      }
+      // Fallback: stringify the entire payload
+      return JSON.stringify(payload);
+    }
+
+    return String(payload);
+  }
+
+  /**
+   * Extract transactions array from payload
+   */
+  private extractTransactionsArray(
+    payload: MessagePayload | TransactionPayload
+  ): TransactionPayload[] {
+    if (Array.isArray(payload)) {
+      return payload as TransactionPayload[];
+    }
+
+    if (typeof payload === 'object' && payload !== null && 'transactions' in payload) {
+      const transactions = (payload as { transactions?: unknown }).transactions;
+      if (Array.isArray(transactions)) {
+        return transactions as TransactionPayload[];
+      }
+    }
+
+    throw new Error('Invalid payload: sign_all_transactions requires an array of transactions');
   }
 }

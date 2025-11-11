@@ -299,7 +299,7 @@ export default function Index() {
     // }
     // setScanning(true);
     // Test data - Phoenix URI format: phoenix:{JSON}
-    const phoenixURI = `phoenix://connect?version=1&uuid=bac054dc-0425-44e1-9627-5d2608bdeb2b&serverUrl=http%3A%2F%2Flocalhost%3A3001&publicKey=H8gEY814buTL%2FOw0RKI%2FmwNlTC0iOkfpftQraFCTCUI%3D`
+    const phoenixURI = `phoenix://connect?version=1&uuid=b194bece-576a-4411-8008-a36ef3453471&serverUrl=http%3A%2F%2Flocalhost%3A3001&publicKey=H8gEY814buTL%2FOw0RKI%2FmwNlTC0iOkfpftQraFCTCUI%3D`
     handleQRScanned({ data: phoenixURI });
   };
 
