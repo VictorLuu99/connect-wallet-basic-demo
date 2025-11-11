@@ -22,7 +22,13 @@ import {
 
 import { SolanaCluster, SolanaConnector } from '@phoenix-wallet/solana';
 import { AptosNetwork, PetraAptosConnector, OKXAptosConnector } from '@phoenix-wallet/aptos';
-import { SuiStandardConnnector, SUI_DEVNET_CHAIN, Wallet } from '@phoenix-wallet/sui';
+import { SuiStandardConnnector, SUI_DEVNET_CHAIN, Wallet, SuiCluster } from '@phoenix-wallet/sui';
+import {
+  PhoenixQREvmConnector,
+  PhoenixQRSolanaConnector,
+  PhoenixQRAptosConnector,
+  PhoenixQRSuiConnector,
+} from '@phoenix-wallet/connect-wallet';
 
 import { isWalletAdapterCompatibleWallet, StandardWalletAdapter } from '@solana/wallet-standard-wallet-adapter-base';
 import { PhantomWalletAdapter } from '@solana/wallet-adapter-phantom';
@@ -88,7 +94,54 @@ export const ClientWalletProvider: React.FC<ClientWalletProviderProps> = ({
 
     // Initialize connectors on the client side
     const initializeConnectors = () => {
+      // Phoenix QR connectors configuration
+      const phoenixConfig = {
+        serverUrl: 'wss://whales-wallet-replayer-dev.gaimes.dev',
+        reconnect: true,
+        reconnectAttempts: 5,
+        reconnectDelay: 2000,
+        enablePersistence: true,
+      };
+
       const baseConnectors: IConnector[] = [
+        // Phoenix QR connectors for all chains
+        new PhoenixQREvmConnector(
+          {
+            name: 'Phoenix QR (EVM)',
+            logo: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEyIDJMMTMuMDkgOC4yNkwyMCA5TDEzLjA5IDE1Ljc0TDEyIDIyTDEwLjkxIDE1Ljc0TDQgOUwxMC45MSA4LjI2TDEyIDJaIiBmaWxsPSIjRkY2MDAwIi8+Cjwvc3ZnPgo=',
+          },
+          phoenixConfig,
+          dappMetadata,
+          ['1', '137', '11155111', '56']
+        ),
+        new PhoenixQRSolanaConnector(
+          phoenixConfig,
+          dappMetadata,
+          SolanaCluster.DEVNET,
+          ['solana_devnet', 'solana_mainnet_beta']
+        ),
+        new PhoenixQRAptosConnector(
+          {
+            name: 'Phoenix QR (Aptos)',
+            logo: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEyIDJMMTMuMDkgOC4yNkwyMCA5TDEzLjA5IDE1Ljc0TDEyIDIyTDEwLjkxIDE1Ljc0TDQgOUwxMC45MSA4LjI2TDEyIDJaIiBmaWxsPSIjRkY2MDAwIi8+Cjwvc3ZnPgo=',
+          },
+          phoenixConfig,
+          dappMetadata,
+          AptosNetwork.TESTNET,
+          ['aptos_mainnet', 'aptos_testnet']
+        ),
+        new PhoenixQRSuiConnector(
+          {
+            name: 'Phoenix QR (Sui)',
+            logo: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEyIDJMMTMuMDkgOC4yNkwyMCA5TDEzLjA5IDE1Ljc0TDEyIDIyTDEwLjkxIDE1Ljc0TDQgOUwxMC45MSA4LjI2TDEyIDJaIiBmaWxsPSIjRkY2MDAwIi8+Cjwvc3ZnPgo=',
+          },
+          phoenixConfig,
+          dappMetadata,
+          SuiCluster.MAINNET,
+          ['sui_testnet', 'sui_mainnet']
+        ),
+
+        // Traditional browser extension connectors
         new MetamaskEvmConnector(dappMetadata, ['1', '137', '11155111', '56']),
         new PhantomEvmConnector(dappMetadata, ['1', '137', '11155111', '56']),
         new CoinbaseEvmConnector(dappMetadata, ['1', '137', '11155111', '56']),

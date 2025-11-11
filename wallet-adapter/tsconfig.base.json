@@ -20,7 +20,8 @@
       "@phoenix-wallet/solana": ["packages/solana/src/index.ts"],
       "@phoenix-wallet/aptos": ["packages/aptos/src/index.ts"],
       "@phoenix-wallet/sui": ["packages/sui/src/index.ts"],
-      "@phoenix-wallet/privy": ["packages/privy/src/index.ts"]
+      "@phoenix-wallet/privy": ["packages/privy/src/index.ts"],
+      "@phoenix-wallet/connect-wallet": ["packages/connect-wallet/src/index.ts"]
     }
   },
   "exclude": ["node_modules", "tmp"]

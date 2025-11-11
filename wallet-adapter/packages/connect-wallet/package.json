@@ -1,0 +1,64 @@
+{
+  "name": "@phoenix-wallet/connect-wallet",
+  "version": "0.1.0",
+  "description": "QR-code based wallet connector using phoenix-dapp and phoenix-wallet SDKs",
+  "main": "./dist/cjs/src/index.js",
+  "module": "./dist/esm/src/index.js",
+  "types": "./dist/esm/src/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/esm/src/index.js",
+      "require": "./dist/cjs/src/index.js",
+      "types": "./dist/esm/src/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "pnpm run build:esm && pnpm run build:cjs",
+    "build:esm": "tsc --project tsconfig.json",
+    "build:cjs": "tsc --project tsconfig.cjs.json",
+    "dev": "tsc --project tsconfig.json --watch",
+    "clean": "rm -rf dist",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@phoenix-wallet/core": "workspace:*",
+    "@phoenix-wallet/evm": "workspace:*",
+    "@phoenix-wallet/solana": "workspace:*",
+    "@phoenix-wallet/aptos": "workspace:*",
+    "@phoenix-wallet/sui": "workspace:*",
+    "@aptos-labs/wallet-adapter-core": "^1.0.0",
+    "@solana/wallet-adapter-base": "^0.9.23",
+    "@vincenttaylorlab3/phoenix-dapp": "^0.1.9",
+    "eventemitter3": "^5.0.1",
+    "socket.io-client": "^4.8.1",
+    "tweetnacl": "^1.0.3"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "typescript": "^5"
+  },
+  "keywords": [
+    "phoenix",
+    "wallet",
+    "connector",
+    "qrcode",
+    "walletconnect",
+    "evm",
+    "solana",
+    "multi-chain"
+  ],
+  "author": "Phoenix Wallet Team",
+  "license": "MIT"
+}

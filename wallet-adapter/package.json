@@ -28,6 +28,7 @@
     "@mui/x-data-grid": "^8.5.1",
     "@mysten/sui": "^1.43.2",
     "@phoenix-wallet/aptos": "workspace:*",
+    "@phoenix-wallet/connect-wallet": "workspace:*",
     "@phoenix-wallet/core": "workspace:*",
     "@phoenix-wallet/evm": "workspace:*",
     "@phoenix-wallet/privy": "workspace:*",

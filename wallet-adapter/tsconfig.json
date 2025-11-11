@@ -26,6 +26,7 @@
       "@phoenix-wallet/aptos": ["./packages/aptos/src"],
       "@phoenix-wallet/sui": ["./packages/sui/src"],
       "@phoenix-wallet/privy": ["./packages/privy/src"],
+      "@phoenix-wallet/connect-wallet": ["./packages/connect-wallet/src"],
       "@phoenix-wallet/wallet-adapter": ["./src/phoenix-wallet"]
     }
   },
